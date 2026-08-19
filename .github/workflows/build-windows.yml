@@ -1,0 +1,44 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if (Test-Path 'requirements.txt') { pip install -r requirements.txt }
+
+      - name: Build EXE with PyInstaller
+        shell: powershell
+        run: |
+          pyinstaller --onefile mian.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: freecad-pdf-windows-x64
+          path: dist/*.exe
+
+      - name: Create GitHub Release and upload EXE
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ github.run_number }}
+          name: Release ${{ github.run_number }}
+          files: dist/*.exe
