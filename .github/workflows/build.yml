@@ -1,7 +1,8 @@
 name: Build and Package Executable
 
-# 触发条件：当向 main 分支 push 代码，或者创建 tag 时自动运行
+# 触发条件设置
 on:
+  workflow_dispatch: # 添加该配置，支持在 GitHub 页面手动点击触发
   push:
     branches:
       - main
@@ -16,29 +17,24 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    # 1. 拉取仓库代码
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. 配置 Python 环境
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    # 3. 安装依赖与 PyInstaller 打包工具
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
 
-    # 4. 执行 PyInstaller 编译打包
     - name: Build EXE with PyInstaller
       run: |
         pyinstaller --noconfirm --onedir --windowed --name "PDFBubbleAnnotator" main.py
 
-    # 5. 上传编译产物 (Artifacts)，方便直接下载
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
