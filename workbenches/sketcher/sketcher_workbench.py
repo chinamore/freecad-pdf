@@ -2,11 +2,12 @@
 Workbench 2: 2D Sketcher Workbench
 FreeCAD-style Parametric Sketcher with Snapping, Geometry, & Scipy Constraint Solver Engine.
 """
+import json
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsLineItem, QGraphicsEllipseItem,
     QTableWidgetItem, QFileDialog, QMessageBox
 )
-from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPen, QColor, QAction
 
 from workbenches.base_workbench import BaseWorkbench
@@ -28,6 +29,7 @@ class SketcherWorkbench(BaseWorkbench):
         # Data Models
         self.points = []
         self.lines = []
+        self.line_items = []  # QGraphicsLineItem mirroring self.lines
         self.circles = []
         self.constraints = []
         
@@ -58,12 +60,12 @@ class SketcherWorkbench(BaseWorkbench):
     def setup_toolbar(self, toolbar):
         line_act = QAction("Draw Line", self.main_window)
         line_act.setCheckable(True)
-        line_act.triggered.connect(lambda: self.set_draw_mode("LINE"))
+        line_act.triggered.connect(lambda checked: self.set_draw_mode("LINE" if checked else "SELECT"))
         toolbar.addAction(line_act)
 
         circle_act = QAction("Draw Circle", self.main_window)
         circle_act.setCheckable(True)
-        circle_act.triggered.connect(lambda: self.set_draw_mode("CIRCLE"))
+        circle_act.triggered.connect(lambda checked: self.set_draw_mode("CIRCLE" if checked else "SELECT"))
         toolbar.addAction(circle_act)
 
         toolbar.addSeparator()
@@ -86,8 +88,12 @@ class SketcherWorkbench(BaseWorkbench):
         self.main_window.log(f"Sketcher Tool Mode: {mode}")
 
     def on_mouse_press(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            QGraphicsView.mousePressEvent(self.view, event)
+            return
+
         pos = self.view.mapToScene(event.pos())
-        
+
         if self.draw_mode == "LINE":
             if self.temp_start_point is None:
                 self.temp_start_point = pos
@@ -98,7 +104,8 @@ class SketcherWorkbench(BaseWorkbench):
                 line = SketchLine(p1, p2)
                 
                 self.lines.append(line)
-                self.scene.addLine(p1.x, p1.y, p2.x, p2.y, QPen(QColor(37, 99, 235), 2))
+                item = self.scene.addLine(p1.x, p1.y, p2.x, p2.y, QPen(QColor(37, 99, 235), 2))
+                self.line_items.append(item)
                 
                 self.main_window.log(f"Line Created: ({p1.x:.1f},{p1.y:.1f}) -> ({p2.x:.1f},{p2.y:.1f})")
                 self.temp_start_point = None
@@ -140,6 +147,9 @@ class SketcherWorkbench(BaseWorkbench):
 
     def solve_sketch(self):
         dof, res = self.solver.solve(self.points, self.lines, self.constraints)
+        # Sync the scene with the solved geometry
+        for line, item in zip(self.lines, self.line_items):
+            item.setLine(line.p1.x, line.p1.y, line.p2.x, line.p2.y)
         self.main_window.log(f"Solver result: Residual = {res:.6f}, Remaining Degrees of Freedom (DOF) = {dof}")
         self.update_dock_views(self.main_window.tree_list, self.main_window.property_table)
 
@@ -165,5 +175,32 @@ class SketcherWorkbench(BaseWorkbench):
 
     def export_data(self):
         file_path, _ = QFileDialog.getSaveFileName(self.main_window, "Export Sketch DXF/JSON", "", "JSON Files (*.json)")
-        if file_path:
-            QMessageBox.information(self.main_window, "Exported", "Sketch data exported successfully!")
+        if not file_path:
+            return
+        data = {
+            "lines": [
+                {"id": l.id, "p1": [l.p1.x, l.p1.y], "p2": [l.p2.x, l.p2.y],
+                 "is_construction": l.is_construction}
+                for l in self.lines
+            ],
+            "circles": [
+                {"id": c.id, "center": [c.center.x, c.center.y], "radius": c.radius,
+                 "is_construction": c.is_construction}
+                for c in self.circles
+            ],
+            "constraints": [
+                {"type": c["type"], "target": c["target"].id}
+                for c in self.constraints
+            ],
+        }
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except OSError as e:
+            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write file:\n{e}")
+            return
+        QMessageBox.information(
+            self.main_window, "Exported",
+            f"Exported {len(self.lines)} lines, {len(self.circles)} circles, "
+            f"{len(self.constraints)} constraints."
+        )

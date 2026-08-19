@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsEllipseItem,
     QGraphicsTextItem, QGraphicsItemGroup, QFileDialog, QTableWidgetItem, QMessageBox
 )
-from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QAction, QPixmap
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPen, QBrush, QFont, QAction
 
 from workbenches.base_workbench import BaseWorkbench
 
@@ -47,7 +47,6 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.scene = QGraphicsScene()
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHints(self.view.renderHints())
-        self.view.viewport().installEventFilter(self.view)
 
         self.bubbles = []
         self.current_balloon_index = 1
@@ -143,11 +142,16 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
 
     def export_data(self):
         file_path, _ = QFileDialog.getSaveFileName(self.main_window, "Export Balloons JSON", "", "JSON Files (*.json)")
-        if file_path:
-            data = [
-                {"balloon_id": b.number, "x": b.pos().x(), "y": b.pos().y()}
-                for b in self.bubbles
-            ]
+        if not file_path:
+            return
+        data = [
+            {"balloon_id": b.number, "x": b.pos().x(), "y": b.pos().y()}
+            for b in self.bubbles
+        ]
+        try:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
-            QMessageBox.information(self.main_window, "Success", f"Exported {len(data)} balloons to JSON!")
+        except OSError as e:
+            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write file:\n{e}")
+            return
+        QMessageBox.information(self.main_window, "Success", f"Exported {len(data)} balloons to JSON!")

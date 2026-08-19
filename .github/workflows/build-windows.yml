@@ -28,7 +28,7 @@ jobs:
       - name: Build EXE with PyInstaller
         shell: powershell
         run: |
-          pyinstaller --onefile mian.py
+          pyinstaller --noconfirm --onefile --windowed --name "PDFBubbleAnnotator" main.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

@@ -1,14 +1,13 @@
 """
 FreeCAD-Style Main Window with Workbench Switcher & Dockable Panels
 """
-import os
 from PyQt6.QtWidgets import (
     QMainWindow, QComboBox, QToolBar, QDockWidget, QListWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QTextEdit, QVBoxLayout,
-    QWidget, QLabel, QStackedWidget, QMessageBox, QFileDialog, QSplitter
+    QWidget, QLabel, QStackedWidget, QMessageBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QAction
 
 from workbenches.pdf_annotator.pdf_workbench import PDFAnnotatorWorkbench
 from workbenches.sketcher.sketcher_workbench import SketcherWorkbench
@@ -122,8 +121,10 @@ class MainWindow(QMainWindow):
 
     def register_workbench(self, name, workbench_instance):
         self.workbenches[name] = workbench_instance
-        self.workbench_combo.addItem(name)
+        # Add to the stack first: addItem fires currentTextChanged, which
+        # switches to this widget and requires it to already be in the stack.
         self.central_stack.addWidget(workbench_instance.get_central_widget())
+        self.workbench_combo.addItem(name)
 
     def on_workbench_changed(self, name):
         if name not in self.workbenches:
