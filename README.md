@@ -9,9 +9,12 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
    - Dockable Tree View & Property Inspector (`QDockWidget`).
    - Integrated Python Console & Logging output.
 
-2. **Workbench 1: PDF Bubble Annotator**:
-   - Interactive balloon placement with auto-incrementing numbers.
-   - Sequential auto-renumbering & clearing.
+2. **Workbench 1: PDF Bubble Annotator** (PyMuPDF rendering engine):
+   - True PDF page rendering with page navigation, zoom (Ctrl+Wheel), and fit-to-view.
+   - Click-to-add draggable balloons with auto-incrementing sequence numbers.
+   - Per-balloon styling: diameter, border width, font size, outline / fill / text colors, transparent fill.
+   - Right-click / Delete key removal, per-page auto-renumbering, Undo / Redo (50 steps).
+   - Vector PDF export (balloons drawn into a copy of the source PDF), current-page PNG, batch PNG, and printing.
    - Export balloon coordinates & metadata to JSON for FAI inspection reports.
 
 3. **Workbench 2: 2D Sketcher Workbench**:
