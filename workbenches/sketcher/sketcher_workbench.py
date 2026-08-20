@@ -214,6 +214,11 @@ def _draw_icon_shape(p, kind):
         p.drawLine(12, 17, 12, 21)
         p.drawLine(3, 12, 7, 12)
         p.drawLine(17, 12, 21, 12)
+    elif kind == "REFLINE":  # dashed infinite-ish reference line
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setColor(QColor(70, 130, 220))
+        p.setPen(pen)
+        p.drawLine(3, 18, 21, 6)
     # ---- geometric constraints (FreeCAD photo style) --------------------
     elif kind == "COINCIDENT":  # two endpoints merging into one
         p.drawLine(4, 8, 12, 12)
@@ -299,6 +304,8 @@ class SketcherView(QGraphicsView):
         self.wb = workbench
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setMouseTracking(True)
+        # rubber-band box select in Select mode
+        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
@@ -340,6 +347,7 @@ class SketcherWorkbench(BaseWorkbench):
         ("RECT", 2, "Rectangle", "G, R"),
         ("TRIANGLE", 2, "Triangle", "G, T"),
         ("SQUARE", 2, "Square", "G, S"),
+        ("REFLINE", 2, "Reference line", "G, X"),
     ]
 
     # constraint type -> slot kinds for the FreeCAD-style pick workflow
@@ -404,6 +412,7 @@ class SketcherWorkbench(BaseWorkbench):
 
         # Interaction state
         self._drag = None              # {"points": [...], "last": QPointF}
+        self._composing = False        # inside a composite shape (rect/polygon)
         self._key_prefix = ""          # "G" arms FreeCAD-style create-tool keys
         self._constr_action = None     # toolbar action kept for sync
         self._pick = None              # {"type", "kinds", "got"}
@@ -420,14 +429,16 @@ class SketcherWorkbench(BaseWorkbench):
 
     # ------------------------------------------------------------------ UI
     def _draw_grid(self):
-        grid_pen = QPen(QColor(230, 230, 230), 1, Qt.PenStyle.DotLine)
+        # draw with zero-width (cosmetic) pens so the grid is always 1px on
+        # screen regardless of zoom, and stays visible in the default view
+        grid_pen = QPen(QColor(225, 225, 225), 0, Qt.PenStyle.DotLine)
         for x in range(-1000, 1000, 50):
             self.scene.addLine(x, -1000, x, 1000, grid_pen)
         for y in range(-1000, 1000, 50):
             self.scene.addLine(-1000, y, 1000, y, grid_pen)
         # FreeCAD default XY reference lines: X axis red, Y axis green
-        x_pen = QPen(QColor(200, 40, 40), 2)
-        y_pen = QPen(QColor(40, 160, 40), 2)
+        x_pen = QPen(QColor(200, 40, 40), 0)
+        y_pen = QPen(QColor(40, 160, 40), 0)
         self.scene.addLine(-1000, 0, 1000, 0, x_pen)
         self.scene.addLine(0, -1000, 0, 1000, y_pen)
         label_font = QFont("Arial", 10, QFont.Weight.Bold)
@@ -446,6 +457,8 @@ class SketcherWorkbench(BaseWorkbench):
                                        QPen(QColor(200, 0, 0), 2),
                                        QBrush(QColor(220, 40, 40)))
         origin.setZValue(40)
+        # default view centred on the origin (like FreeCAD's sketch view)
+        self.view.centerOn(0, 0)
 
     def get_central_widget(self):
         return self.view
@@ -885,7 +898,7 @@ class SketcherWorkbench(BaseWorkbench):
     # ------------------------------------------------------------------ shortcuts
     _CREATE_KEYS = {"P": "POINT", "L": "LINE", "M": "POLYLINE", "C": "CIRCLE",
                     "A": "ARC_CENTER", "3": "ARC3", "R": "RECT",
-                    "T": "TRIANGLE", "S": "SQUARE"}
+                    "T": "TRIANGLE", "S": "SQUARE", "X": "REFLINE"}
 
     def on_key(self, event):
         """FreeCAD-style shortcuts. G + letter creates geometry; plain
@@ -901,6 +914,9 @@ class SketcherWorkbench(BaseWorkbench):
             return True
         if key == Qt.Key.Key_Y and mods & Qt.KeyboardModifier.ControlModifier:
             self.redo()
+            return True
+        if key == Qt.Key.Key_A and mods & Qt.KeyboardModifier.ControlModifier:
+            self.select_all()
             return True
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selected()
@@ -1047,7 +1063,36 @@ class SketcherWorkbench(BaseWorkbench):
         self.solve_sketch()
         if auto_constrain:
             self._auto_hv(line)
+        if not self._composing:
+            self._offer_length_input(line)
         return line
+
+    # ------------------------------------------------------------------ on-create value input
+    def _offer_length_input(self, line):
+        """FreeCAD-style: after drawing a line, offer to type its exact length
+        (pre-filled with the dragged value, mm). Esc keeps the dragged length."""
+        cur = math.hypot(line.p2.x - line.p1.x, line.p2.y - line.p1.y)
+        value, ok = QInputDialog.getDouble(
+            self.main_window, tr("Line Length"), tr("Length (mm):"),
+            cur, 0.01, 1e6, 2)
+        if not ok or abs(value - cur) < 1e-9:
+            return
+        self.snapshot()
+        self.constraints.append({"type": "DISTANCE", "targets": [line],
+                                 "value": value})
+        self.solve_sketch()
+
+    def _offer_radius_input(self, geom):
+        cur = geom.radius
+        value, ok = QInputDialog.getDouble(
+            self.main_window, tr("Radius"), tr("Radius (mm):"),
+            cur, 0.01, 1e6, 2)
+        if not ok or abs(value - cur) < 1e-9:
+            return
+        self.snapshot()
+        self.constraints.append({"type": "RADIUS", "targets": [geom],
+                                 "value": value})
+        self.solve_sketch()
 
     def _auto_hv(self, line):
         """FreeCAD auto-constraint: nearly axis-aligned lines get H/V."""
@@ -1080,6 +1125,7 @@ class SketcherWorkbench(BaseWorkbench):
                                  x=round(center.x, 1), y=round(center.y, 1),
                                  r=round(radius, 1)))
         self.solve_sketch()
+        self._offer_radius_input(circle)
         return circle
 
     def add_arc(self, p_start, mid_xy, p_end, construction=None):
@@ -1137,16 +1183,57 @@ class SketcherWorkbench(BaseWorkbench):
             return None
         bl, br = SketchPoint(x1, y1), SketchPoint(x2, y1)
         tpr, tpl = SketchPoint(x2, y2), SketchPoint(x1, y2)
-        bottom = self.add_line(bl, br, construction)
-        right = self.add_line(br, tpr, construction)
-        top = self.add_line(tpr, tpl, construction)
-        left = self.add_line(tpl, bl, construction)
+        self._composing = True
+        try:
+            bottom = self.add_line(bl, br, construction)
+            right = self.add_line(br, tpr, construction)
+            top = self.add_line(tpr, tpl, construction)
+            left = self.add_line(tpl, bl, construction)
+        finally:
+            self._composing = False
         for line, kind in ((bottom, "HORIZONTAL"), (top, "HORIZONTAL"),
                            (left, "VERTICAL"), (right, "VERTICAL")):
             self.constraints.append({"type": kind, "targets": [line]})
         self.main_window.log(tr("Rectangle created with automatic H/V constraints."))
         self.solve_sketch()
+        self._offer_rect_size(bottom, left)
         return (bottom, right, top, left)
+
+    def _offer_rect_size(self, bottom, left):
+        """Offer width/height (mm) after drawing a rectangle."""
+        w = math.hypot(bottom.p2.x - bottom.p1.x, bottom.p2.y - bottom.p1.y)
+        h = math.hypot(left.p2.x - left.p1.x, left.p2.y - left.p1.y)
+        w2, ok = QInputDialog.getDouble(self.main_window, tr("Rectangle Width"),
+                                        tr("Width (mm):"), w, 0.01, 1e6, 2)
+        if ok and abs(w2 - w) > 1e-9:
+            self.constraints.append({"type": "DISTANCE_X", "targets": [bottom],
+                                     "value": w2})
+        h2, ok2 = QInputDialog.getDouble(self.main_window, tr("Rectangle Height"),
+                                         tr("Height (mm):"), h, 0.01, 1e6, 2)
+        if ok2 and abs(h2 - h) > 1e-9:
+            self.constraints.append({"type": "DISTANCE_Y", "targets": [left],
+                                     "value": h2})
+        if (ok and abs(w2 - w) > 1e-9) or (ok2 and abs(h2 - h) > 1e-9):
+            self.solve_sketch()
+
+    def add_reference_line(self, p1, p2):
+        """FreeCAD-style construction/reference line: drawn as an infinite
+        dashed line through the two points, flagged as construction geometry."""
+        if math.hypot(p2.x - p1.x, p2.y - p1.y) < 0.5:
+            self.main_window.log(tr("Reference line rejected: zero length."))
+            return None
+        self.snapshot()
+        line = SketchLine(p1, p2, is_construction=True)
+        self.lines.append(line)
+        self.draw_item(line)
+        item = self.item_of_geom[line.id]
+        pen = QPen(C_CONSTRUCTION, 1.5, Qt.PenStyle.DashLine)
+        item.setPen(pen)
+        self.main_window.log(trt("Reference line added from ({x1}, {y1}) to ({x2}, {y2}).",
+                                 x1=round(p1.x, 1), y1=round(p1.y, 1),
+                                 x2=round(p2.x, 1), y2=round(p2.y, 1)))
+        self.solve_sketch()
+        return line
 
     def add_polygon(self, center_xy, vertex_xy, sides, construction=None):
         """FreeCAD-style regular polygon: N chained lines + equal constraints."""
@@ -1160,8 +1247,12 @@ class SketcherWorkbench(BaseWorkbench):
         verts = [SketchPoint(cx + r * math.cos(a0 + 2 * math.pi * i / sides),
                              cy + r * math.sin(a0 + 2 * math.pi * i / sides))
                  for i in range(sides)]
-        sides_lines = [self.add_line(verts[i], verts[(i + 1) % sides], construction)
-                       for i in range(sides)]
+        self._composing = True
+        try:
+            sides_lines = [self.add_line(verts[i], verts[(i + 1) % sides], construction)
+                           for i in range(sides)]
+        finally:
+            self._composing = False
         for i in range(sides - 1):
             self.constraints.append(
                 {"type": "EQUAL", "targets": [sides_lines[i], sides_lines[i + 1]]})
@@ -1249,6 +1340,12 @@ class SketcherWorkbench(BaseWorkbench):
         elif self.draw_mode == "RECT" and len(self.temp_points) == 2:
             (s1, _), (s2, _) = self.temp_points
             self.add_rectangle((s1.x(), s1.y()), (s2.x(), s2.y()))
+            self.set_draw_mode("SELECT")  # single-shot tool
+        elif self.draw_mode == "REFLINE" and len(self.temp_points) == 2:
+            (s1, e1), (s2, e2) = self.temp_points
+            p1 = e1 or SketchPoint(s1.x(), s1.y())
+            p2 = e2 or SketchPoint(s2.x(), s2.y())
+            self.add_reference_line(p1, p2)
             self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode in ("TRIANGLE", "SQUARE") and len(self.temp_points) == 2:
             (s1, _), (s2, _) = self.temp_points
@@ -1826,6 +1923,12 @@ class SketcherWorkbench(BaseWorkbench):
         self._rebuild_vertices()
 
     # ------------------------------------------------------------------ editing
+    def select_all(self):
+        for item in self.item_of_geom.values():
+            item.setSelected(True)
+        self.main_window.log(trt("Selected {n} element(s).",
+                                 n=len(self.item_of_geom)))
+
     def delete_selected(self):
         geoms = self.selected_geometry()
         if not geoms:
@@ -1924,15 +2027,17 @@ class SketcherWorkbench(BaseWorkbench):
             return a2, a1
         return a1, a2
 
-    def export_dxf(self):
+    # ------------------------------------------------------------------ import / export
+    def export_dxf(self, file_path=None):
         """FreeCAD-style 'Save as 2D CAD': export the sketch as a DXF file."""
         if not self._all_geometry():
             QMessageBox.information(self.main_window, tr("Export 2D CAD"),
                                     tr("The sketch is empty."))
             return
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, tr("Save as 2D CAD (DXF)"), "",
-            tr("DXF Files (*.dxf)"))
+        if file_path is None:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self.main_window, tr("Save as 2D CAD (DXF)"), "",
+                tr("DXF Files (*.dxf)"))
         if not file_path:
             return
         if not file_path.lower().endswith(".dxf"):
@@ -1967,11 +2072,6 @@ class SketcherWorkbench(BaseWorkbench):
             QMessageBox.critical(self.main_window, tr("Export Failed"),
                                  tr("Could not write file:") + f"\n{e}")
             return
-        QMessageBox.information(
-            self.main_window, tr("Exported"),
-            f"DXF saved: {file_path}\n"
-            f"{len(self.lines)} lines, {len(self.circles)} circles, "
-            f"{len(self.arcs)} arcs, {len(self.points)} points")
         self.main_window.log(trt("2D CAD (DXF) saved to {v}", v=file_path))
 
     def export_svg(self):
@@ -2008,13 +2108,17 @@ class SketcherWorkbench(BaseWorkbench):
             item.show()
         self.main_window.log(trt("2D vector (SVG) saved to {v}", v=file_path))
 
-    def export_data(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, tr("Export Sketch JSON"), "", tr("JSON Files (*.json)"))
+    # ------------------------------------------------------------------ native JSON
+    def export_data(self, file_path=None):
+        if file_path is None:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self.main_window, tr("Save 2D Sketch (JSON)"), "",
+                tr("Sketch Files (*.sketch.json);;JSON Files (*.json)"))
         if not file_path:
             return
         data = {
-            "points": [{"id": p.id, "x": p.x, "y": p.y} for p in self.points],
+            "points": [{"id": p.id, "x": p.x, "y": p.y,
+                        "is_construction": p.is_construction} for p in self.points],
             "lines": [
                 {"id": l.id, "p1": [l.p1.x, l.p1.y], "p2": [l.p2.x, l.p2.y],
                  "is_construction": l.is_construction}
@@ -2027,7 +2131,7 @@ class SketcherWorkbench(BaseWorkbench):
             ],
             "arcs": [
                 {"id": a.id, "center": [a.center.x, a.center.y], "radius": a.radius,
-                 "p1": [a.p1.x, a.p1.y], "p2": [a.p2.x, a.p2.y],
+                 "p1": [a.p1.x, a.p1.y], "p2": [a.p2.x, a.p2.y], "mid": list(a.mid),
                  "is_construction": a.is_construction}
                 for a in self.arcs
             ],
@@ -2046,7 +2150,135 @@ class SketcherWorkbench(BaseWorkbench):
             QMessageBox.critical(self.main_window, tr("Export Failed"),
                                  tr("Could not write file:") + f"\n{e}")
             return
-        QMessageBox.information(
-            self.main_window, tr("Exported"),
-            f"Exported {len(self.lines)} lines, {len(self.circles)} circles, "
-            f"{len(self.arcs)} arcs\nSaved to: {file_path}")
+        self.main_window.log(trt("2D sketch saved to {v}", v=file_path))
+
+    def open_sketch(self, file_path=None):
+        """Open a native .sketch.json (exported by 'Save 2D Sketch')."""
+        if file_path is None:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self.main_window, tr("Open 2D Sketch"), "",
+                tr("Sketch Files (*.sketch.json);;JSON Files (*.json)"))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            QMessageBox.critical(self.main_window, tr("Open Failed"), str(e))
+            return
+        self.clear_sketch()
+        for pd in data.get("points", []):
+            p = SketchPoint(pd["x"], pd["y"])
+            p.is_construction = pd.get("is_construction", False)
+            self.points.append(p)
+            self.draw_item(p)
+        for ld in data.get("lines", []):
+            l = SketchLine(SketchPoint(*ld["p1"]), SketchPoint(*ld["p2"]),
+                           ld.get("is_construction", False))
+            self.lines.append(l)
+            self.draw_item(l)
+        for cd in data.get("circles", []):
+            c = SketchCircle(SketchPoint(*cd["center"]), cd["radius"],
+                             cd.get("is_construction", False))
+            self.circles.append(c)
+            self.draw_item(c)
+        for ad in data.get("arcs", []):
+            a = SketchArc(SketchPoint(*ad["center"]), ad["radius"],
+                          SketchPoint(*ad["p1"]), SketchPoint(*ad["p2"]),
+                          mid=tuple(ad.get("mid", (0, 0))),
+                          is_construction=ad.get("is_construction", False))
+            self.arcs.append(a)
+            self.draw_item(a)
+        # constraints reference geometry by id -> rebuild against the new objects
+        id_of = {g.id: g for g in self._all_geometry()}
+        for cd in data.get("constraints", []):
+            targets = [id_of[t] for t in cd.get("targets", []) if t in id_of]
+            if targets or cd.get("points"):
+                c = {"type": cd["type"], "targets": targets}
+                if "value" in cd:
+                    c["value"] = cd["value"]
+                self.constraints.append(c)
+        self.solve_sketch()
+        self._rebuild_vertices()
+        self.main_window.log(trt("Opened 2D sketch {v}", v=file_path))
+
+    # ------------------------------------------------------------------ DXF import
+    def import_dxf(self, file_path=None):
+        """Import a DXF (LINE / CIRCLE / ARC / POINT entities) into the sketch."""
+        if file_path is None:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self.main_window, tr("Import 2D CAD (DXF)"), "",
+                tr("DXF Files (*.dxf)"))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        except OSError as e:
+            QMessageBox.critical(self.main_window, tr("Import Failed"), str(e))
+            return
+        entities = self._parse_dxf_entities(text)
+        if not entities:
+            QMessageBox.information(self.main_window, tr("Import 2D CAD"),
+                                    tr("No supported entities (LINE/CIRCLE/ARC/POINT) found."))
+            return
+        self.snapshot()
+        imported = 0
+        for kind, d in entities:
+            try:
+                if kind == "LINE":
+                    self.add_line(SketchPoint(d[10], -d[20]), SketchPoint(d[11], -d[21]))
+                elif kind == "CIRCLE":
+                    self.add_circle(SketchPoint(d[10], -d[20]), d[40])
+                elif kind == "ARC":
+                    cx, cy, r = d[10], -d[20], d[40]
+                    a1, a2 = math.radians(d[50]), math.radians(d[51])
+                    p1 = SketchPoint(cx + r * math.cos(a1), cy - r * math.sin(a1))
+                    p2 = SketchPoint(cx + r * math.cos(a2), cy - r * math.sin(a2))
+                    am = (d[50] + ((d[51] - d[50]) % 360) / 2) % 360
+                    mid = (cx + r * math.cos(math.radians(am)),
+                           cy - r * math.sin(math.radians(am)))
+                    self.add_arc(p1, mid, p2)
+                elif kind == "POINT":
+                    self.add_point_geom(SketchPoint(d[10], -d[20]))
+                imported += 1
+            except Exception:
+                continue
+        self.main_window.log(trt("Imported {n} entities from {v}", n=imported, v=file_path))
+        self._rebuild_vertices()
+
+    @staticmethod
+    def _parse_dxf_entities(text):
+        """Minimal DXF ENTITIES parser: LINE, CIRCLE, ARC, POINT (group-code pairs)."""
+        lines = [ln.rstrip("\r") for ln in text.splitlines()]
+        # isolate the ENTITIES section
+        try:
+            start = next(i for i, ln in enumerate(lines) if ln.strip() == "ENTITIES")
+        except StopIteration:
+            return []
+        try:
+            end = next(i for i in range(start + 1, len(lines))
+                       if lines[i].strip() == "ENDSEC")
+        except StopIteration:
+            end = len(lines)
+        ents = []
+        i = start + 1
+        current = None
+        while i < end:
+            code = lines[i].strip()
+            value = lines[i + 1].strip() if i + 1 < end else ""
+            i += 2
+            if code == "0":
+                if current and current[0] in ("LINE", "CIRCLE", "ARC", "POINT"):
+                    ents.append(current)
+                current = (value, {})
+                continue
+            if current is None:
+                continue
+            try:
+                current[1][int(code)] = float(value)
+            except ValueError:
+                pass
+        if current and current[0] in ("LINE", "CIRCLE", "ARC", "POINT"):
+            ents.append(current)
+        return ents

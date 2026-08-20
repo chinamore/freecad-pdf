@@ -66,20 +66,37 @@ class MainWindow(QMainWindow):
         # File Menu
         file_menu = menu.addMenu(tr("&File"))
 
-        open_action = QAction(tr("&Open PDF..."), self)
-        open_action.setShortcut("Ctrl+O")
-        open_action.triggered.connect(self.open_pdf)
-        file_menu.addAction(open_action)
-
         new2d_action = QAction(tr("&New 2D Sketch"), self)
         new2d_action.setShortcut("Ctrl+N")
         new2d_action.triggered.connect(self.new_2d_sketch)
         file_menu.addAction(new2d_action)
 
+        open_sketch_action = QAction(tr("&Open 2D Sketch..."), self)
+        open_sketch_action.triggered.connect(self.open_2d_sketch)
+        file_menu.addAction(open_sketch_action)
+
+        import_dxf_action = QAction(tr("&Import 2D CAD (DXF)..."), self)
+        import_dxf_action.triggered.connect(self.import_2d_dxf)
+        file_menu.addAction(import_dxf_action)
+
+        file_menu.addSeparator()
+
+        open_action = QAction(tr("&Open PDF..."), self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self.open_pdf)
+        file_menu.addAction(open_action)
+
         export_action = QAction(tr("&Export Annotations / JSON..."), self)
         export_action.setShortcut("Ctrl+E")
         export_action.triggered.connect(self.export_data)
         file_menu.addAction(export_action)
+
+        file_menu.addSeparator()
+
+        save_json_action = QAction(tr("&Save 2D Sketch (JSON)..."), self)
+        save_json_action.setShortcut("Ctrl+S")
+        save_json_action.triggered.connect(self.save_2d_sketch)
+        file_menu.addAction(save_json_action)
 
         dxf_action = QAction(tr("Save as 2D CAD (DXF)..."), self)
         dxf_action.triggered.connect(self.save_2d_dxf)
@@ -269,6 +286,21 @@ class MainWindow(QMainWindow):
         if wb is not None:
             wb.clear_sketch()
             self.log(tr("New 2D sketch created."))
+
+    def open_2d_sketch(self):
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.open_sketch()
+
+    def import_2d_dxf(self):
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.import_dxf()
+
+    def save_2d_sketch(self):
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.export_data()
 
     def save_2d_dxf(self):
         wb = self._sketcher_wb()

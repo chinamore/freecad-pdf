@@ -19,11 +19,21 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
    - Vector PDF export (balloons drawn into a copy of the source PDF), current-page PNG, batch PNG, and printing.
    - Export balloon coordinates & metadata to JSON for FAI inspection reports.
 
-3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD Sketcher parity):
+3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD Sketcher parity, full 2D CAD):
    - **FreeCAD-style red tool icons** on the toolbar (text lives in the tooltip / status tip).
    - Geometry tools (single-shot: they return to Select after one shape): Point `G,P`,
      Line `G,L`, Polyline `G,M` (continuous chain until Esc), Circle `G,C`,
-     Arc by center `G,A`, Arc by 3 points `G,3`, Rectangle `G,R`, Triangle `G,T`, Square `G,S`.
+     Arc by center `G,A`, Arc by 3 points `G,3`, Rectangle `G,R`, Triangle `G,T`,
+     Square `G,S`, Reference line `G,X` (dashed construction line).
+   - **Type-in dimensions while drawing**: after a line/circle/rectangle is placed, a
+     small dialog offers the exact length / radius / width+height (mm, pre-filled with the
+     dragged value); typing a value applies it, Esc keeps the dragged size.
+   - **Selection & editing**: rubber-band box select (drag on empty canvas), Ctrl+A select
+     all, Del deletes the picked line/circle/arcs only.
+   - File menu: **New 2D Sketch** (Ctrl+N), **Open 2D Sketch…**, **Import 2D CAD (DXF)…**,
+     **Save 2D Sketch (JSON)** (Ctrl+S) — round-trippable, **Save as 2D CAD (DXF)…**,
+     **Save as 2D Vector (SVG)…**.
+   - Canvas shows the FreeCAD-style origin marker and red X / green Y reference axes.
    - **Red vertex handles** at every endpoint / center (line ends, rectangle corners, ...),
      moving with the geometry.
    - Constraints: Coincident `C`, Point-on-object `O`, Horizontal `H`, Vertical `V`,
