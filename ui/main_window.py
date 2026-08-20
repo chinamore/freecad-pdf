@@ -71,10 +71,22 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_pdf)
         file_menu.addAction(open_action)
 
+        new2d_action = QAction(tr("&New 2D Sketch"), self)
+        new2d_action.setShortcut("Ctrl+N")
+        new2d_action.triggered.connect(self.new_2d_sketch)
+        file_menu.addAction(new2d_action)
+
         export_action = QAction(tr("&Export Annotations / JSON..."), self)
         export_action.setShortcut("Ctrl+E")
         export_action.triggered.connect(self.export_data)
         file_menu.addAction(export_action)
+
+        dxf_action = QAction(tr("Save as 2D CAD (DXF)..."), self)
+        dxf_action.triggered.connect(self.save_2d_dxf)
+        file_menu.addAction(dxf_action)
+        svg_action = QAction(tr("Save as 2D Vector (SVG)..."), self)
+        svg_action.triggered.connect(self.save_2d_svg)
+        file_menu.addAction(svg_action)
 
         file_menu.addSeparator()
         exit_action = QAction(tr("E&xit"), self)
@@ -242,6 +254,31 @@ class MainWindow(QMainWindow):
         wb = self.workbenches.get(self._current_wb_key)
         if wb:
             wb.export_data()
+
+    def _sketcher_wb(self):
+        wb = self.workbenches.get(WB_SKETCH)
+        if wb is None:
+            return None
+        if self._current_wb_key != WB_SKETCH:
+            self._select_workbench(WB_SKETCH)
+        return wb
+
+    def new_2d_sketch(self):
+        """Ctrl+N: switch to the Sketcher and start a blank sketch."""
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.clear_sketch()
+            self.log(tr("New 2D sketch created."))
+
+    def save_2d_dxf(self):
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.export_dxf()
+
+    def save_2d_svg(self):
+        wb = self._sketcher_wb()
+        if wb is not None:
+            wb.export_svg()
 
     def show_about(self):
         QMessageBox.about(

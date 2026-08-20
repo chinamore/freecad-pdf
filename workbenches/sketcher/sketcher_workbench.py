@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (QFileDialog, QGraphicsEllipseItem,
                              QGraphicsLineItem, QGraphicsPathItem,
                              QGraphicsScene, QGraphicsSimpleTextItem,
                              QGraphicsView, QInputDialog, QLabel,
-                             QMessageBox, QSpinBox, QTableWidgetItem)
+                             QMenu, QMessageBox, QSpinBox, QTableWidgetItem)
 
 from sketcher.models import SketchPoint, SketchLine, SketchCircle, SketchArc
 from sketcher.solver import (HAS_SCIPY, SketchSolver, STATUS_EMPTY,
@@ -82,6 +82,79 @@ def _icon_dots(p, pts, r=2.2):
     p.setBrush(QBrush(_ICON_RED))
     for x, y in pts:
         p.drawEllipse(QPointF(x, y), r, r)
+
+
+def _draw_dim_icon(p, kind):
+    """FreeCAD-style dimensional-constraint glyph (24x24 painter)."""
+    pen = QPen(_ICON_RED, 1.8)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    if kind == "DIM":  # ruler with arrowheads, used for the dimension group
+        p.drawLine(4, 12, 20, 12)
+        p.drawLine(4, 12, 8, 8)
+        p.drawLine(4, 12, 8, 16)
+        p.drawLine(20, 12, 16, 8)
+        p.drawLine(20, 12, 16, 16)
+        for x in (7, 12, 17):
+            p.drawLine(x, 9, x, 15)
+    elif kind == "DIST_X":  # H: two vertical bars joined by an arrowed line
+        p.drawLine(5, 5, 5, 19)
+        p.drawLine(19, 5, 19, 19)
+        p.drawLine(5, 12, 19, 12)
+        p.drawLine(5, 12, 9, 9)
+        p.drawLine(5, 12, 9, 15)
+        p.drawLine(19, 12, 15, 9)
+        p.drawLine(19, 12, 15, 15)
+    elif kind == "DIST_Y":  # I: two horizontal bars joined by an arrowed line
+        p.drawLine(5, 5, 19, 5)
+        p.drawLine(5, 19, 19, 19)
+        p.drawLine(12, 5, 12, 19)
+        p.drawLine(12, 5, 9, 9)
+        p.drawLine(12, 5, 15, 9)
+        p.drawLine(12, 19, 9, 15)
+        p.drawLine(12, 19, 15, 15)
+    elif kind == "DIST":  # diagonal double-arrow (point-to-point)
+        p.drawLine(5, 19, 19, 5)
+        p.drawLine(5, 19, 10, 19)
+        p.drawLine(5, 19, 5, 14)
+        p.drawLine(19, 5, 14, 5)
+        p.drawLine(19, 5, 19, 10)
+    elif kind == "RADIUS":  # circle with a radius spoke
+        p.drawEllipse(QPointF(13, 11), 8, 8)
+        p.drawLine(13, 11, 19, 5)
+        _icon_dots(p, [(13, 11)], r=1.8)
+    elif kind == "DIAMETER":  # circle with a diagonal slash through it
+        p.drawEllipse(QPointF(12, 12), 8, 8)
+        p.drawLine(6, 18, 18, 6)
+    elif kind == "ANGLE":  # wedge with a small arc
+        p.drawLine(4, 18, 20, 18)
+        p.drawLine(4, 18, 16, 6)
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(4, 10, 16, 16), 0)
+        path.arcTo(QRectF(4, 10, 16, 16), 0, 45)
+        p.drawPath(path)
+    elif kind == "LOCK":  # padlock
+        p.drawRect(7, 11, 10, 9)
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(8, 3, 8, 10), 0)
+        path.arcTo(QRectF(8, 3, 8, 10), 0, 180)
+        p.drawPath(path)
+        _icon_dots(p, [(12, 15)], r=1.6)
+    elif kind == "BLOCK":  # circle with a crossed prohibition slash
+        p.drawEllipse(QPointF(12, 12), 8, 8)
+        p.drawLine(6, 6, 18, 18)
+
+
+def make_dim_icon(kind):
+    from PyQt6.QtGui import QPixmap, QIcon
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    _draw_dim_icon(p, kind)
+    p.end()
+    return QIcon(pm)
 
 
 def _draw_icon_shape(p, kind):
@@ -141,6 +214,47 @@ def _draw_icon_shape(p, kind):
         p.drawLine(12, 17, 12, 21)
         p.drawLine(3, 12, 7, 12)
         p.drawLine(17, 12, 21, 12)
+    # ---- geometric constraints (FreeCAD photo style) --------------------
+    elif kind == "COINCIDENT":  # two endpoints merging into one
+        p.drawLine(4, 8, 12, 12)
+        p.drawLine(20, 8, 12, 12)
+        _icon_dots(p, [(4, 8), (20, 8)], r=2.0)
+        _icon_dots(p, [(12, 12)], r=3.0)
+    elif kind == "POINT_ON":  # point sitting on a curve
+        path = QPainterPath(QPointF(4, 16))
+        path.quadTo(12, 4, 20, 16)
+        p.drawPath(path)
+        _icon_dots(p, [(12, 9.5)], r=3.0)
+    elif kind == "H_CONSTR":  # bold H
+        p.drawLine(6, 5, 6, 19)
+        p.drawLine(18, 5, 18, 19)
+        p.drawLine(6, 12, 18, 12)
+    elif kind == "V_CONSTR":  # perpendicular mark
+        p.drawLine(5, 17, 19, 17)
+        p.drawLine(12, 17, 12, 5)
+        p.drawRect(8, 13, 4, 4)
+    elif kind == "PARALLEL_CON":  # //
+        p.drawLine(8, 19, 13, 5)
+        p.drawLine(13, 19, 18, 5)
+    elif kind == "PERP_CON":  # < rotated (perpendicular glyph)
+        p.drawLine(5, 12, 13, 20)
+        p.drawLine(5, 12, 13, 4)
+    elif kind == "TANGENT_CON":  # circle with tangent line
+        p.drawEllipse(QPointF(12, 13), 6, 6)
+        p.drawLine(4, 19, 20, 19)
+    elif kind == "EQUAL_CON":  # =
+        p.drawLine(5, 10, 19, 10)
+        p.drawLine(5, 15, 19, 15)
+    elif kind == "SYMM_CON":  # two triangles mirrored about a dashed axis
+        pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.drawLine(12, 3, 12, 21)
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        p.setPen(pen)
+        p.drawLine(4, 8, 8, 12)
+        p.drawLine(4, 16, 8, 12)
+        p.drawLine(20, 8, 16, 12)
+        p.drawLine(20, 16, 16, 12)
 
 
 def make_tool_icon(kind, label=""):
@@ -355,31 +469,59 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        for icon_text, label, sc, handler in (
-            ("C", tr("Coincident"), "C", self.add_coincident_constraint),
-            ("O", tr("Point-on"), "O", self.add_point_on_constraint),
-            ("H", "H", "H", self.add_horizontal_constraint),
-            ("V", "V", "V", self.add_vertical_constraint),
-            ("//", tr("Parallel"), "P", self.add_parallel_constraint),
-            ("N", tr("Perp"), "N", self.add_perpendicular_constraint),
-            ("T", tr("Tangent"), "T", self.add_tangent_constraint),
-            ("=", tr("Equal"), "E", self.add_equal_constraint),
-            ("SYM", tr("Symmetric"), "S", self.add_symmetric_constraint),
-            ("D", tr("Distance"), "D", self.add_length_constraint),
-            ("DX", tr("Dist X"), "L", self.add_distance_x_constraint),
-            ("DY", tr("Dist Y"), "I", self.add_distance_y_constraint),
-            ("R", tr("Radius"), "R", self.add_radius_constraint),
-            ("DIA", tr("Diameter"), "", self.add_diameter_constraint),
-            ("A", tr("Angle"), "A", self.add_angle_constraint),
-            ("LK", tr("Lock"), "K", self.add_lock_constraint),
-            ("BLK", tr("Block"), "B", self.add_block_constraint),
+        # ---- geometric constraints (FreeCAD glyphs) -------------------------
+        for kind, label, sc, handler in (
+            ("COINCIDENT", tr("Coincident"), "C", self.add_coincident_constraint),
+            ("POINT_ON", tr("Point-on"), "O", self.add_point_on_constraint),
+            ("H_CONSTR", "H", "H", self.add_horizontal_constraint),
+            ("V_CONSTR", "V", "V", self.add_vertical_constraint),
+            ("PARALLEL_CON", tr("Parallel"), "P", self.add_parallel_constraint),
+            ("PERP_CON", tr("Perp"), "N", self.add_perpendicular_constraint),
+            ("TANGENT_CON", tr("Tangent"), "T", self.add_tangent_constraint),
+            ("EQUAL_CON", tr("Equal"), "E", self.add_equal_constraint),
+            ("SYMM_CON", tr("Symmetric"), "S", self.add_symmetric_constraint),
         ):
-            act = QAction(make_constraint_icon(icon_text), "", self.main_window)
-            tip = f"{label} ({sc})" if sc else label
+            act = QAction(make_tool_icon(kind), "", self.main_window)
+            tip = f"{label} ({sc})"
             act.setToolTip(tip)
             act.setStatusTip(tip)
             act.triggered.connect(handler)
             toolbar.addAction(act)
+
+        # ---- dimension group: one dropdown button, like FreeCAD -------------
+        dim_act = QAction(make_dim_icon("DIM"), "", self.main_window)
+        dim_act.setToolTip(tr("Dimension constraints"))
+        dim_act.setStatusTip(tr("Dimension constraints"))
+        dim_menu = QMenu(self.main_window)
+        dim_items = (
+            ("DIM", tr("Dimension"), "D", self.add_length_constraint),
+            ("DIST_X", tr("Horizontal distance constraint"), "L",
+             self.add_distance_x_constraint),
+            ("DIST_Y", tr("Vertical distance constraint"), "I",
+             self.add_distance_y_constraint),
+            ("DIST", tr("Distance constraint"), "K, D", self.add_length_constraint),
+            ("RADIUS", tr("Radius constraint"), "K, R", self.add_radius_constraint),
+            ("DIAMETER", tr("Diameter constraint"), "K, O",
+             self.add_diameter_constraint),
+            ("ANGLE", tr("Angle constraint"), "K, A", self.add_angle_constraint),
+            ("LOCK", tr("Lock constraint"), "K, L", self.add_lock_constraint),
+        )
+        for kind, label, sc, handler in dim_items:
+            act = dim_menu.addAction(make_dim_icon(kind), f"{label}\t{sc}")
+            act.triggered.connect(handler)
+        dim_act.setMenu(dim_menu)
+        toolbar.addAction(dim_act)
+        dim_btn = toolbar.widgetForAction(dim_act)
+        if dim_btn is not None:
+            dim_btn.setPopupMode(dim_btn.ToolButtonPopupMode.MenuButtonPopup)
+            dim_btn.clicked.connect(self.add_length_constraint)
+
+        # block stays standalone (not in FreeCAD's dimension menu)
+        blk_act = QAction(make_dim_icon("BLOCK"), "", self.main_window)
+        blk_act.setToolTip(f"{tr('Block')} (B)")
+        blk_act.setStatusTip(f"{tr('Block')} (B)")
+        blk_act.triggered.connect(self.add_block_constraint)
+        toolbar.addAction(blk_act)
 
         toolbar.addSeparator()
 
@@ -1781,9 +1923,9 @@ class SketcherWorkbench(BaseWorkbench):
         out = ["0", "SECTION", "2", "ENTITIES"]
 
         def add_line(x1, y1, x2, y2):
-            out += ["0", "LINE", "8", "0",
-                    "10", f"{x1}", "20", f"{-y1}",
-                    "11", f"{x2}", "21", f"{-y2}"]
+            out.extend(["0", "LINE", "8", "0",
+                        "10", f"{x1}", "20", f"{-y1}",
+                        "11", f"{x2}", "21", f"{-y2}"])
 
         for l in self.lines:
             add_line(l.p1.x, l.p1.y, l.p2.x, l.p2.y)
@@ -1813,6 +1955,40 @@ class SketcherWorkbench(BaseWorkbench):
             f"{len(self.lines)} lines, {len(self.circles)} circles, "
             f"{len(self.arcs)} arcs, {len(self.points)} points")
         self.main_window.log(trt("2D CAD (DXF) saved to {v}", v=file_path))
+
+    def export_svg(self):
+        """FreeCAD-style 'Save as SVG': render the sketch to an SVG vector file."""
+        if not self._all_geometry():
+            QMessageBox.information(self.main_window, tr("Export SVG"),
+                                    tr("The sketch is empty."))
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.main_window, tr("Save as 2D Vector (SVG)"), "",
+            tr("SVG Files (*.svg)"))
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".svg"):
+            file_path += ".svg"
+        from PyQt6.QtSvg import QSvgGenerator
+        rect = self.scene.itemsBoundingRect().adjusted(-20, -20, 20, 20)
+        gen = QSvgGenerator()
+        gen.setFileName(file_path)
+        gen.setSize(rect.size().toSize())
+        gen.setViewBox(rect)
+        gen.setTitle("2D Sketch")
+        painter = QPainter(gen)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hidden = []
+        for item in self.scene.items():
+            if item in self._badge_items or item in self._vertex_items.values() \
+                    or item is self._preview:
+                item.hide()
+                hidden.append(item)
+        self.scene.render(painter, rect, rect)
+        painter.end()
+        for item in hidden:
+            item.show()
+        self.main_window.log(trt("2D vector (SVG) saved to {v}", v=file_path))
 
     def export_data(self):
         file_path, _ = QFileDialog.getSaveFileName(
