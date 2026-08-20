@@ -17,10 +17,13 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
    - Vector PDF export (balloons drawn into a copy of the source PDF), current-page PNG, batch PNG, and printing.
    - Export balloon coordinates & metadata to JSON for FAI inspection reports.
 
-3. **Workbench 2: 2D Sketcher Workbench**:
-   - Parametric geometry drafting (Lines, Circles, Origin Grid).
+3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD-style parametric sketcher):
+   - Geometry tools: Line, Circle, 3-point Arc, Rectangle (auto H/V constraints).
+   - Grid & endpoint snapping (shared points = structural coincidence), construction geometry mode.
+   - Constraints: Coincident, Horizontal, Vertical, Parallel, Perpendicular, Equal, Length, Radius, Lock.
+   - SciPy least-squares solver with shared-variable deduplication, DOF analysis,
+     over-constraint detection, and fully-constrained green highlighting.
    - Coordinate Transformer (Mapping PDF Page Points to Physical Sketch mm space).
-   - Geometric Constraint Solver integration (`SciPy` Levenberg-Marquardt optimizer bridge).
 
 ---
 
