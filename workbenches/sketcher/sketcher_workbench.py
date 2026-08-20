@@ -623,8 +623,62 @@ class SketcherWorkbench(BaseWorkbench):
         dxf_act.triggered.connect(self.export_dxf)
         toolbar.addAction(dxf_act)
 
+        # TechDraw template library (A3 / A4, landscape / portrait)
+        tpl_act = QAction(make_constraint_icon("TPL"), "", self.main_window)
+        tpl_act.setToolTip(tr("Insert TechDraw page template"))
+        tpl_menu = QMenu(self.main_window)
+        for name, (w, h, landscape) in (
+                ("A3 Landscape", (420, 297, True)),
+                ("A3 Portrait", (297, 420, False)),
+                ("A4 Landscape", (297, 210, True)),
+                ("A4 Portrait", (210, 297, False))):
+            act = tpl_menu.addAction(name)
+            act.triggered.connect(
+                lambda checked, n=name, s=(w, h, landscape):
+                self.insert_template(n, s))
+        tpl_act.setMenu(tpl_menu)
+        toolbar.addAction(tpl_act)
+        tpl_btn = toolbar.widgetForAction(tpl_act)
+        if tpl_btn is not None:
+            tpl_btn.setPopupMode(tpl_btn.ToolButtonPopupMode.InstantPopup)
+
         self.dof_label = QLabel(self._dof_text)
         toolbar.addWidget(self.dof_label)
+
+    # ------------------------------------------------------------------ TechDraw templates
+    def insert_template(self, name, size):
+        """Place an ISO-style TechDraw page frame (border + title block) on the
+        canvas. Geometry can then be arranged inside the frame."""
+        w, h, _ = size
+        frame_pen = QPen(QColor(40, 40, 40), 1.5)
+        item = self.scene.addRect(-w / 2, -h / 2, w, h, frame_pen)
+        item.setZValue(-5)
+        # title block lines (ISO-like, bottom-right corner)
+        bx, by = w / 2, h / 2
+        tb_w, tb_h = 155, 24
+        self.scene.addLine(bx - tb_w, by, bx, by, frame_pen).setZValue(-4)
+        self.scene.addLine(bx - tb_w, by - tb_h, bx, by - tb_h,
+                           frame_pen).setZValue(-4)
+        self.scene.addLine(bx - tb_w, by - tb_h, bx - tb_w, by, frame_pen).setZValue(-4)
+        font = QFont("Arial", 3)
+        fields = [
+            ("TITLE", bx - tb_w + 3, by - 16),
+            ("AUTHOR", bx - tb_w + 3, by - 12),
+            ("DATE", bx - tb_w + 3, by - 8),
+            ("SCALE", bx - tb_w + 3, by - 4),
+            ("SHEET", bx - tb_w + 60, by - 4),
+            ("MATERIAL", bx - tb_w + 60, by - 16),
+        ]
+        for label, x, y in fields:
+            t = QGraphicsSimpleTextItem(label + ":")
+            t.setFont(font)
+            t.setPos(x, y)
+            t.setZValue(-3)
+            self.scene.addItem(t)
+        self._template = item  # remember
+        self.main_window.log(trt("TechDraw template {n} inserted.", n=name))
+        self.view.fitInView(item.boundingRect().adjusted(-30, -30, 30, 30),
+                            Qt.AspectRatioMode.KeepAspectRatio)
 
     def retranslate(self):
         """Hook called by MainWindow.retranslate() to refresh cached strings."""
@@ -1876,9 +1930,10 @@ class SketcherWorkbench(BaseWorkbench):
         self._request("BLOCK")
 
     def _edit_constraint_value(self, c):
+        """FreeCAD TechDraw-style: edit nominal + over/under tolerances."""
         value, ok = QInputDialog.getDouble(
             self.main_window, tr("Edit Constraint"), tr("Value:"),
-            c["value"], -1e6, 1e6, 2)
+            c["value"], -1e6, 1e6, 4)
         if not ok:
             return
         self.snapshot()
@@ -1886,6 +1941,34 @@ class SketcherWorkbench(BaseWorkbench):
         self.main_window.log(trt("{c} changed to {v}.", c=c["type"],
                                  v=round(value, 2)))
         self.solve_sketch()
+        self._show_tolerance_panel(c)
+
+    def _show_tolerance_panel(self, c):
+        """Populate the left tolerance editor for this constraint."""
+        mw = self.main_window
+        mw.tolerance_frame.setVisible(True)
+        mw.tol_nominal.setText(f"{c['value']:.2f} mm")
+        mw.tol_over.blockSignals(True)
+        mw.tol_over.setValue(c.get("tol_over", 0.0))
+        mw.tol_over.blockSignals(False)
+        mw.tol_under.blockSignals(True)
+        mw.tol_under.setValue(c.get("tol_under", 0.0))
+        mw.tol_under.blockSignals(False)
+        mw.tol_decimals.blockSignals(True)
+        mw.tol_decimals.setValue(c.get("tol_dec", 2))
+        mw.tol_decimals.blockSignals(False)
+        # hook spinbox changes to the constraint
+        def apply(_=None, c=c):
+            c["tol_over"] = mw.tol_over.value()
+            c["tol_under"] = mw.tol_under.value()
+            c["tol_dec"] = mw.tol_decimals.value()
+            self.solve_sketch()
+        for sb in (mw.tol_over, mw.tol_under, mw.tol_decimals):
+            try:
+                sb.valueChanged.disconnect()
+            except TypeError:
+                pass
+            sb.valueChanged.connect(apply)
 
     def _delete_constraint(self, badge_item):
         c = self._badge_of_item.get(badge_item)
@@ -1953,6 +2036,16 @@ class SketcherWorkbench(BaseWorkbench):
             item.setPen(pen)
 
     # ------------------------------------------------------------------ badges
+    def _dim_text(self, prefix, c):
+        """TechDraw dimension string with tol, e.g. 'D 246.17 +0.05/-0.02'."""
+        dec = c.get("tol_dec", 2)
+        v = f"{c['value']:.{dec}f}"
+        over = c.get("tol_over", 0.0)
+        under = c.get("tol_under", 0.0)
+        if over or under:
+            return f"{prefix} {v} +{over}/-{abs(under)}"
+        return f"{prefix} {v}"
+
     def _badge_text_pos(self, c):
         """Badge (text, position, is_dimensional) for one constraint."""
         t = c["type"]
@@ -1999,27 +2092,27 @@ class SketcherWorkbench(BaseWorkbench):
                 pos = QPointF((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 14)
             else:
                 pos = line_mid(tg[0])
-            return f"D {c['value']:.2f}", pos, dim
+            return self._dim_text("D", c), pos, dim
         if t == "DISTANCE_X":
             if c.get("points"):
                 p1, p2 = c["points"]
                 pos = QPointF((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 14)
             else:
                 pos = line_mid(tg[0])
-            return f"DX {c['value']:.2f}", pos, dim
+            return self._dim_text("DX", c), pos, dim
         if t == "DISTANCE_Y":
             if c.get("points"):
                 p1, p2 = c["points"]
                 pos = QPointF((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 14)
             else:
                 pos = line_mid(tg[0])
-            return f"DY {c['value']:.2f}", pos, dim
+            return self._dim_text("DY", c), pos, dim
         if t == "RADIUS":
-            return f"R {c['value']:.2f}", round_pos(tg[0]), dim
+            return self._dim_text("R", c), round_pos(tg[0]), dim
         if t == "DIAMETER":
-            return f"DIA {c['value']:.2f}", round_pos(tg[0]), dim
+            return self._dim_text("DIA", c), round_pos(tg[0]), dim
         if t == "ANGLE":
-            return f"{c['value']:.1f} deg", line_mid(tg[0]), dim
+            return self._dim_text("", c) + " deg", line_mid(tg[0]), dim
         return None
 
     def _rebuild_badges(self):

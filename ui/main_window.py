@@ -8,7 +8,8 @@ import sys
 from PyQt6.QtWidgets import (
     QMainWindow, QComboBox, QToolBar, QDockWidget, QListWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QTextEdit, QVBoxLayout,
-    QWidget, QLabel, QStackedWidget, QMessageBox, QFileDialog
+    QWidget, QLabel, QStackedWidget, QMessageBox, QFileDialog,
+    QFrame, QFormLayout, QDoubleSpinBox, QSpinBox
 )
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QAction, QIcon
@@ -182,6 +183,22 @@ class MainWindow(QMainWindow):
         self.property_table.setHorizontalHeaderLabels([tr("Property"), tr("Value")])
         self.property_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         left_layout.addWidget(self.property_table, 1)
+
+        # TechDraw-style tolerance editor (visible when a dimension is picked)
+        self.tolerance_frame = QFrame()
+        tol_layout = QFormLayout(self.tolerance_frame)
+        self.tol_nominal = QLabel("-")
+        tol_layout.addRow(tr("Nominal:"), self.tol_nominal)
+        self.tol_over = QDoubleSpinBox(minimum=-1e6, maximum=1e6, decimals=4)
+        self.tol_over.setSingleStep(0.01)
+        tol_layout.addRow(tr("+Tol:"), self.tol_over)
+        self.tol_under = QDoubleSpinBox(minimum=-1e6, maximum=1e6, decimals=4)
+        self.tol_under.setSingleStep(0.01)
+        tol_layout.addRow(tr("-Tol:"), self.tol_under)
+        self.tol_decimals = QSpinBox(minimum=0, maximum=6, value=2)
+        tol_layout.addRow(tr("Decimals:"), self.tol_decimals)
+        self.tolerance_frame.setVisible(False)
+        left_layout.addWidget(self.tolerance_frame)
 
         self.left_dock.setWidget(left_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.left_dock)
