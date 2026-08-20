@@ -20,6 +20,13 @@ try:
             _p = _os.path.join(_meipass, _cand)
             if _os.path.isdir(_p) and _p not in _os.environ.get("PATH", ""):
                 _os.environ["PATH"] = _p + _os.pathsep + _os.environ.get("PATH", "")
+    # casadi (needed by cadquery.occ_impl.nurbs via the import chain) ships
+    # its own native dll directory; make it discoverable too
+    if _meipass:
+        for _cand in ("casadi", "casadi.libs"):
+            _p = _os.path.join(_meipass, _cand)
+            if _os.path.isdir(_p) and _p not in _os.environ.get("PATH", ""):
+                _os.environ["PATH"] = _p + _os.pathsep + _os.environ.get("PATH", "")
     from cadquery import importers
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.TopAbs import TopAbs_EDGE

@@ -33,7 +33,7 @@ jobs:
 
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "PDFBubbleAnnotator" --icon assets/icon.ico --add-data "assets;assets" --hidden-import ezdwg --collect-all cadquery --collect-all OCP main.py
+        pyinstaller --noconfirm --onedir --windowed --name "PDFBubbleAnnotator" --icon assets/icon.ico --add-data "assets;assets" --hidden-import ezdwg --collect-all cadquery --collect-all OCP --collect-all casadi main.py
 
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
