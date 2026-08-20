@@ -28,6 +28,7 @@ TEMPLATE_FILES = [
     "A4_Portrait_ISO5457_minimal.svg",
 ]
 FIELDS = ["TITLE", "AUTHOR", "DATE", "SCALE", "SHEET", "MATERIAL"]
+VIEWS = ["FRONT", "TOP", "RIGHT", "LEFT", "ISO"]
 
 # icon colour scheme matching the FreeCAD TechDraw red/black style
 _TD_RED = QColor(200, 40, 40)
@@ -68,6 +69,12 @@ class TechDrawWorkbench(BaseWorkbench):
         self._balloon_n = 0
         self._dim_n = 0
         self._actions = {}                # mode -> QAction (checked sync)
+        # 3D STEP state
+        self._solid = None                # loaded OCC solid
+        self._proj_views = {}             # view name -> list of 2D polylines
+        self._proj_items = []             # drawn projection items
+        self._proj_origin = QPointF(0, 0)
+        self._proj_scale = 1.0
 
     # ------------------------------------------------------------------ UI
     def get_central_widget(self):
@@ -76,6 +83,31 @@ class TechDrawWorkbench(BaseWorkbench):
     def setup_toolbar(self, toolbar):
         def tip(t, s=""):
             return f"{t} ({s})" if s else t
+        # 3D STEP loader
+        step_act = QAction(tr("Load STEP..."), self.main_window)
+        step_act.setToolTip(tr("Load a STEP (.step/.stp) 3D file"))
+        step_act.triggered.connect(self.load_step_dialog)
+        toolbar.addAction(step_act)
+        # projection view dropdown
+        proj_act = QAction(tr("Projection"), self.main_window)
+        proj_act.setToolTip(tr("Insert a projected view (1st/3rd angle)"))
+        proj_menu = QMenu(self.main_window)
+        for v in VIEWS:
+            act = proj_menu.addAction(v)
+            act.triggered.connect(lambda checked, view=v: self.insert_projection(view))
+        proj_act.setMenu(proj_menu)
+        toolbar.addAction(proj_act)
+        pbtn = toolbar.widgetForAction(proj_act)
+        if pbtn is not None:
+            pbtn.setPopupMode(pbtn.ToolButtonPopupMode.InstantPopup)
+        # 1st / 3rd angle toggle
+        self.angle_act = QAction(tr("3rd angle"), self.main_window)
+        self.angle_act.setCheckable(True)
+        self.angle_act.setChecked(True)  # default third-angle (FreeCAD default)
+        self.angle_act.setToolTip(tr("Projection angle: 3rd (checked) / 1st"))
+        self.angle_act.triggered.connect(self._toggle_angle)
+        toolbar.addAction(self.angle_act)
+        toolbar.addSeparator()
         # page templates
         for label in TEMPLATE_FILES:
             act = QAction(label.replace("ISO5457_", "").replace("_", " ")
@@ -115,6 +147,55 @@ class TechDrawWorkbench(BaseWorkbench):
 
     def export_data(self):
         self.export_svg()
+
+    # ------------------------------------------------------------------ STEP / projection
+    def load_step_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self.main_window, tr("Load STEP"), "",
+            tr("STEP Files (*.step *.stp)"))
+        if path:
+            self.load_step(path)
+
+    def load_step(self, path):
+        try:
+            from utils.step_loader import load_step as _load
+            self._solid = _load(path)
+            self._proj_views = {}
+            self.main_window.log(trt("Loaded STEP: {v}", v=path))
+        except Exception as e:
+            QMessageBox.critical(self.main_window, tr("Load STEP"), str(e))
+
+    def _toggle_angle(self, checked):
+        self.main_window.log(
+            tr("Projection angle: third-angle") if checked
+            else tr("Projection angle: first-angle"))
+
+    def insert_projection(self, view):
+        """Project the loaded STEP solid to 2D and draw it on the page."""
+        if self._solid is None:
+            QMessageBox.information(self.main_window, tr("Projection"),
+                                    tr("Load a STEP file first."))
+            return
+        from utils.step_loader import project_2d
+        if view not in self._proj_views:
+            self._proj_views[view] = project_2d(self._solid, view)
+        lines = self._proj_views[view]
+        if not lines:
+            self.main_window.log(tr("Projection produced no geometry."))
+            return
+        pen = QPen(_TD_RED, 1.0)
+        for poly in lines:
+            for i in range(len(poly) - 1):
+                x1, y1 = poly[i]
+                x2, y2 = poly[i + 1]
+                self.scene.addLine(x1, y1, x2, y2, pen).setZValue(2)
+        self.main_window.log(trt("Inserted {v} projection ({n} edges).",
+                                 v=view, n=len(lines)))
+        # fit the newly added projection into view
+        items = self.scene.items()
+        if items:
+            self.view.fitInView(self.scene.itemsBoundingRect().adjusted(-40, -40, 40, 40),
+                                Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_mode(self, mode):
         self._mode = mode
