@@ -440,6 +440,7 @@ class SketcherWorkbench(BaseWorkbench):
         self._key_prefix = ""          # "G" arms FreeCAD-style create-tool keys
         self._sel_points = []          # ctrl+click multi-selected SketchPoints
         self._constr_action = None     # toolbar action kept for sync
+        self._tool_actions = {}        # draw mode -> toolbar QAction (checked sync)
         self._pick = None              # {"type", "kinds", "got"}
 
         # Undo / redo (deep snapshots; shared points keep identity via memo)
@@ -518,6 +519,7 @@ class SketcherWorkbench(BaseWorkbench):
             act.triggered.connect(
                 lambda checked, m=mode: self.set_draw_mode(m if checked else "SELECT"))
             toolbar.addAction(act)
+            self._tool_actions[mode] = act
 
         constr_act = QAction(make_tool_icon("CONSTRUCTION"), "", self.main_window)
         constr_act.setCheckable(True)
@@ -661,6 +663,13 @@ class SketcherWorkbench(BaseWorkbench):
         self._poly_last = None
         self._pick = None
         self._clear_preview()
+        # FreeCAD: the active tool's toolbar button stays checked, the rest
+        # are released; when we fall back to Select none stays checked
+        for m, act in list(self._tool_actions.items()):
+            try:
+                act.setChecked(m == mode)
+            except RuntimeError:
+                self._tool_actions.pop(m, None)  # toolbar was rebuilt
         self.main_window.log(trt("Sketcher tool: {v}", v=mode))
 
     def cancel_temp(self):
