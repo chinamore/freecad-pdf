@@ -382,6 +382,16 @@ class SketcherWorkbench(BaseWorkbench):
         self.scene.setSceneRect(-1000, -1000, 2000, 2000)
         self.view = SketcherView(self)
 
+        # FreeCAD model geometry: origin point + X/Y reference axes.
+        # These are REAL geometry (can be referenced by constraints) but are
+        # locked in place and not user-deletable.
+        self._origin = SketchPoint(0.0, 0.0)
+        self._x_axis = SketchLine(SketchPoint(-1000, 0), SketchPoint(1000, 0),
+                                  is_construction=True)
+        self._y_axis = SketchLine(SketchPoint(0, -1000), SketchPoint(0, 1000),
+                                  is_construction=True)
+        self._fixed_ids = {self._origin.id, self._x_axis.id, self._y_axis.id}
+
         # State machine
         self.draw_mode = "SELECT"
         self.temp_points = []          # in-progress clicks [(QPointF, SketchPoint|None)]
@@ -403,6 +413,16 @@ class SketcherWorkbench(BaseWorkbench):
         # Graphics bookkeeping
         self.item_of_geom = {}         # geom.id -> QGraphicsItem
         self.geom_of_item = {}         # QGraphicsItem -> geom
+        # register selectable scene items for origin/axes (constraint targets)
+        for geom, color, width in (
+                (self._x_axis, QColor(200, 40, 40), 0),
+                (self._y_axis, QColor(40, 160, 40), 0)):
+            it = QGraphicsLineItem(geom.p1.x, geom.p1.y, geom.p2.x, geom.p2.y)
+            it.setPen(QPen(color, width))
+            it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, True)
+            self.scene.addItem(it)
+            self.item_of_geom[geom.id] = it
+            self.geom_of_item[it] = geom
         self._hover_geom = None        # preselection highlight
         self._badge_items = []         # constraint badge items
         self._badge_of_item = {}       # badge item -> constraint dict
@@ -431,6 +451,24 @@ class SketcherWorkbench(BaseWorkbench):
         # Toolbar label state (the QLabel itself is rebuilt on every
         # workbench switch; see PDF workbench for the rationale)
         self._dof_text = f" {tr('DOF:')} — "
+        # lock origin + axes permanently
+        self.constraints.append({
+            "type": "LOCK",
+            "targets": [self._origin],
+            "points": [self._origin], "coords": [(0.0, 0.0)], "radius": None,
+            "builtin": True})
+        self.constraints.append({
+            "type": "LOCK",
+            "targets": [self._x_axis],
+            "points": list(self._geom_points(self._x_axis)),
+            "coords": [(-1000.0, 0.0), (1000.0, 0.0)], "radius": None,
+            "builtin": True})
+        self.constraints.append({
+            "type": "LOCK",
+            "targets": [self._y_axis],
+            "points": list(self._geom_points(self._y_axis)),
+            "coords": [(0.0, -1000.0), (0.0, 1000.0)], "radius": None,
+            "builtin": True})
 
     # ------------------------------------------------------------------ UI
     def _draw_grid(self):
@@ -637,8 +675,11 @@ class SketcherWorkbench(BaseWorkbench):
             self.main_window.log(tr("In-progress geometry cancelled."))
 
     # ------------------------------------------------------------------ models
-    def _all_geometry(self):
-        return self.lines + self.circles + self.arcs + self.points
+    def _all_geometry(self, include_axes=True):
+        g = self.lines + self.circles + self.arcs + self.points
+        if include_axes:
+            g = g + [self._x_axis, self._y_axis]
+        return g
 
     def _geom_points(self, geom):
         if isinstance(geom, SketchPoint):
@@ -756,8 +797,9 @@ class SketcherWorkbench(BaseWorkbench):
         pin = self._drag["points"] if self._drag else None
         try:
             self.dof, _, self.status, _ = self.solver.solve(
-                self.lines, self.circles, self.arcs, self.constraints,
-                self.points, pin=pin)
+                self.lines + [self._x_axis, self._y_axis], self.circles,
+                self.arcs, self.constraints,
+                self.points + [self._origin], pin=pin)
         except Exception:
             return
         for geom in self._all_geometry():
@@ -1021,6 +1063,7 @@ class SketcherWorkbench(BaseWorkbench):
             if p.id not in seen:
                 seen.add(p.id)
                 out.append(p)
+        add(self._origin)  # FreeCAD origin can be referenced by constraints
         for p in self.points:
             add(p)
         for l in self.lines:
@@ -1335,20 +1378,25 @@ class SketcherWorkbench(BaseWorkbench):
                 self._delete_constraint(badge)
                 return True
             return False
-        if button == Qt.MouseButton.LeftButton and self.draw_mode == "SELECT":
-            # click a vertex handle (point) directly in Select mode
-            p = self._nearest_point(pos, tol=max(6.0, float(self.snap_px)))
-            if p is not None:
-                if p in self._sel_points:
-                    self._sel_points.remove(p)
-                else:
-                    self._sel_points.append(p)
-                self._refresh_point_selection()
+        if button == Qt.MouseButton.LeftButton:
+            if self._pick is not None:
+                self._pick_click(pos)  # pick mode routes ALL clicks to picking
                 return True
-        if button != Qt.MouseButton.LeftButton or self.draw_mode == "SELECT":
-            if button == Qt.MouseButton.LeftButton and self._pick is not None:
-                self._pick_click(pos)
-                return True
+            if self.draw_mode == "SELECT":
+                # click a vertex handle (point) directly in Select mode
+                p = self._nearest_point(pos, tol=max(6.0, float(self.snap_px)))
+                if p is not None:
+                    if p in self._sel_points:
+                        self._sel_points.remove(p)
+                    else:
+                        self._sel_points.append(p)
+                    self._refresh_point_selection()
+                    return True
+                return False  # empty area: let Qt rubber-band / deselect run
+            # creation mode: fall through to the click sequencer below
+        elif button != Qt.MouseButton.RightButton:
+            return False
+        else:
             return False
 
         sp, existing = self.snap(pos)
@@ -1446,25 +1494,50 @@ class SketcherWorkbench(BaseWorkbench):
         if kind == "geom":
             return self._find_geom_at(pos)
         if kind == "line_or_point":
-            return self._nearest_point(pos) or \
-                self._find_geom_at(pos, kinds=(SketchLine,))
+            # for an axis slot prefer a line; only fall back to a point
+            return self._find_geom_at(pos, kinds=(SketchLine,)) or \
+                self._nearest_point(pos)
         if kind in ("curve_or_point", "point_or_end"):
             return self._nearest_point(pos) or self._find_geom_at(pos)
         return None
 
     def _request(self, ctype):
         """FreeCAD constraint flow: use scene selection if it already matches
-        the slots, otherwise enter click-picking mode. FreeCAD leaves the
-        active creation command when a constraint is chosen."""
+        the slots, otherwise enter click-picking mode. Preselected items fill
+        as many leading slots as they match; the user clicks the rest."""
         self.temp_points = []
         self._poly_last = None
         self.draw_mode = "SELECT"
-        kinds = self._SLOTS[ctype]
-        pre = self._collect_preselected(kinds)
-        if pre is not None:
-            self._apply_constraint(ctype, pre)
+        kinds = list(self._SLOTS[ctype])
+        # consume preselection greedily per slot
+        pool = list(self._sel_points) + [
+            g for g in (self.lines + self.circles + self.arcs + self.points)
+            if self.item_of_geom.get(g.id) is not None
+            and self.item_of_geom[g.id].isSelected()]
+        got = []
+        remaining = list(kinds)
+        for kind in list(kinds):
+            match = None
+            for g in pool:
+                if self._slot_matches(kind, g):
+                    match = g
+                    break
+            if match is None:
+                break
+            got.append(match)
+            pool.remove(match)
+            remaining.pop(0)
+        if len(got) == len(kinds):
+            self._sel_points = [p for p in self._sel_points if p not in got]
+            self._apply_constraint(ctype, got)
+            self._refresh_point_selection()
             return
-        self._pick = {"type": ctype, "kinds": list(kinds), "got": []}
+        if got:
+            self._sel_points = [p for p in self._sel_points if p not in got]
+            self._refresh_point_selection()
+        # store the full slot map with the partial got; _pick_click appends
+        self._pick = {"type": ctype, "kinds": remaining, "got": [],
+                      "pre": got, "all_kinds": kinds}
         self.main_window.log(trt("Pick: {what}", what=self._pick_prompt(ctype)))
 
     def _pick_prompt(self, ctype):
@@ -1527,15 +1600,18 @@ class SketcherWorkbench(BaseWorkbench):
             self.main_window.log(tr("Nothing picked - click closer to the target."))
             return
         pick["got"].append(obj)
-        # dynamic early-completion: distance on a single line needs no 2nd point
+        pre = pick.get("pre", [])
+        all_got = pre + pick["got"]
+        all_kinds = pick.get("all_kinds", kinds)
         ctype = pick["type"]
-        if ctype in ("DISTANCE", "DISTANCE_X", "DISTANCE_Y") and len(pick["got"]) == 1 \
-                and isinstance(pick["got"][0], SketchLine):
-            self._apply_constraint(ctype, pick["got"])
+        # dynamic early-completion for distance on a line (first slot)
+        if ctype in ("DISTANCE", "DISTANCE_X", "DISTANCE_Y") and len(all_got) == 1 \
+                and isinstance(all_got[0], SketchLine):
+            self._apply_constraint(ctype, all_got)
             self._pick = None
             return
-        if len(pick["got"]) >= len(kinds):
-            self._apply_constraint(ctype, pick["got"])
+        if len(all_got) >= len(all_kinds):
+            self._apply_constraint(ctype, all_got)
             self._pick = None
 
     # ------------------------------------------------------------------ constraint builders
@@ -1785,7 +1861,8 @@ class SketcherWorkbench(BaseWorkbench):
     # ------------------------------------------------------------------ solver
     def solve_sketch(self):
         self.dof, residual, self.status, redundant = self.solver.solve(
-            self.lines, self.circles, self.arcs, self.constraints, self.points)
+            self.lines + [self._x_axis, self._y_axis], self.circles,
+            self.arcs, self.constraints, self.points + [self._origin])
         self._restyle()
         self._rebuild_badges()
         self._rebuild_vertices()
@@ -1913,6 +1990,8 @@ class SketcherWorkbench(BaseWorkbench):
         font = QFont("Arial", 9)
         used = []  # FreeCAD stacks constraint icons side by side
         for c in self.constraints:
+            if c.get("builtin"):  # no badges for origin/axis locks
+                continue
             spec = self._badge_text_pos(c)
             if spec is None:
                 continue
@@ -1987,7 +2066,8 @@ class SketcherWorkbench(BaseWorkbench):
                                  n=len(self.item_of_geom)))
 
     def delete_selected(self):
-        geoms = self.selected_geometry()
+        geoms = [g for g in self.selected_geometry()
+                 if g.id not in self._fixed_ids]  # origin/axes are not deletable
         if not geoms:
             return
         self.snapshot()
@@ -2016,11 +2096,14 @@ class SketcherWorkbench(BaseWorkbench):
         self.solve_sketch()
 
     def clear_sketch(self):
-        if not self._all_geometry() and not self.constraints:
+        user_geom = self._all_geometry(include_axes=False)
+        if not user_geom and not [c for c in self.constraints
+                                  if not c.get("builtin")]:
             return
         self.snapshot()
-        self.lines, self.circles, self.arcs, self.points, self.constraints = \
-            [], [], [], [], []
+        self.lines, self.circles, self.arcs, self.points = [], [], [], []
+        self.constraints = [c for c in self.constraints if c.get("builtin")]
+        self._sel_points = []
         for item in list(self.item_of_geom.values()):
             self.scene.removeItem(item)
         for item in list(self._vertex_items.values()):
@@ -2108,6 +2191,8 @@ class SketcherWorkbench(BaseWorkbench):
                         "11", f"{x2}", "21", f"{-y2}"])
 
         for l in self.lines:
+            if l.id in self._fixed_ids:  # don't export the reference axes
+                continue
             add_line(l.p1.x, l.p1.y, l.p2.x, l.p2.y)
         for c in self.circles:
             out += ["0", "CIRCLE", "8", "0",
@@ -2179,7 +2264,7 @@ class SketcherWorkbench(BaseWorkbench):
             "lines": [
                 {"id": l.id, "p1": [l.p1.x, l.p1.y], "p2": [l.p2.x, l.p2.y],
                  "is_construction": l.is_construction}
-                for l in self.lines
+                for l in self.lines if l.id not in self._fixed_ids
             ],
             "circles": [
                 {"id": c.id, "center": [c.center.x, c.center.y], "radius": c.radius,

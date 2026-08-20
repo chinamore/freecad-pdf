@@ -282,6 +282,8 @@ class SketchSolver:
         def user_dof_cost():
             n = 0
             for c in constraints:
+                if c.get("builtin"):  # origin / axis locks are not user DOF
+                    continue
                 t = c["type"]
                 if t in ("LOCK", "BLOCK"):
                     n += 2 * len(c["points"]) + (1 if c.get("radius") is not None else 0)
