@@ -9,7 +9,17 @@ first-angle vs third-angle placement is handled by the workbench.
 import math
 
 HAS_CQ = False
+_CQ_ERROR = None
 try:
+    import os as _os
+    import sys as _sys
+    # PyInstaller: make the bundled OCC dlls discoverable on Windows
+    _meipass = getattr(_sys, "_MEIPASS", None)
+    if _meipass:
+        for _cand in ("cadquery_ocp.libs", "OCP"):
+            _p = _os.path.join(_meipass, _cand)
+            if _os.path.isdir(_p) and _p not in _os.environ.get("PATH", ""):
+                _os.environ["PATH"] = _p + _os.pathsep + _os.environ.get("PATH", "")
     from cadquery import importers
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.TopAbs import TopAbs_EDGE
@@ -18,14 +28,14 @@ try:
     from OCP.BRepAdaptor import BRepAdaptor_Curve
     from OCP.GCPnts import GCPnts_UniformAbscissa
     HAS_CQ = True
-except Exception:
-    pass
+except Exception as _e:  # pragma: no cover - environment specific
+    _CQ_ERROR = _e
 
 
 def load_step(path):
     """Return (solid, samples_per_edge) or raise."""
     if not HAS_CQ:
-        raise RuntimeError("cadquery not installed (pip install cadquery)")
+        raise RuntimeError(f"cadquery import failed: {_CQ_ERROR!r}")
     wp = importers.importStep(path)
     solid = wp.val().wrapped
     BRepMesh_IncrementalMesh(solid, 0.2, True)
