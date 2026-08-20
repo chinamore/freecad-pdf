@@ -1335,6 +1335,16 @@ class SketcherWorkbench(BaseWorkbench):
                 self._delete_constraint(badge)
                 return True
             return False
+        if button == Qt.MouseButton.LeftButton and self.draw_mode == "SELECT":
+            # click a vertex handle (point) directly in Select mode
+            p = self._nearest_point(pos, tol=max(6.0, float(self.snap_px)))
+            if p is not None:
+                if p in self._sel_points:
+                    self._sel_points.remove(p)
+                else:
+                    self._sel_points.append(p)
+                self._refresh_point_selection()
+                return True
         if button != Qt.MouseButton.LeftButton or self.draw_mode == "SELECT":
             if button == Qt.MouseButton.LeftButton and self._pick is not None:
                 self._pick_click(pos)
@@ -1492,8 +1502,12 @@ class SketcherWorkbench(BaseWorkbench):
 
     @staticmethod
     def _slot_matches(kind, g):
-        if kind in ("point", "line_or_point", "curve_or_point", "point_or_end"):
+        if kind == "point":
             return isinstance(g, SketchPoint)
+        if kind == "line_or_point":
+            return isinstance(g, (SketchPoint, SketchLine))
+        if kind in ("curve_or_point", "point_or_end"):
+            return True  # resolved by _resolve_slot either way
         if kind == "line":
             return isinstance(g, SketchLine)
         if kind == "round":
