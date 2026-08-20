@@ -32,6 +32,9 @@ VIEWS = ["FRONT", "TOP", "RIGHT", "LEFT", "ISO"]
 
 # icon colour scheme matching the FreeCAD TechDraw red/black style
 _TD_RED = QColor(200, 40, 40)
+_EDGE = QColor(30, 30, 30)          # black edge like FreeCAD
+_FACE = QColor(240, 244, 247)       # light face fill
+_HIDDEN = QColor(150, 150, 150)     # hidden edges (dashed)
 
 
 class DrawingView(QGraphicsView):
@@ -92,6 +95,9 @@ class TechDrawWorkbench(BaseWorkbench):
         proj_act = QAction(tr("Projection"), self.main_window)
         proj_act.setToolTip(tr("Insert a projected view (1st/3rd angle)"))
         proj_menu = QMenu(self.main_window)
+        group_act = proj_menu.addAction(tr("Projection group (FRONT+TOP+RIGHT/LEFT)"))
+        group_act.triggered.connect(self.insert_projection_group)
+        proj_menu.addSeparator()
         for v in VIEWS:
             act = proj_menu.addAction(v)
             act.triggered.connect(lambda checked, view=v: self.insert_projection(view))
@@ -159,11 +165,14 @@ class TechDrawWorkbench(BaseWorkbench):
     def load_step(self, path):
         try:
             from utils.step_loader import load_step as _load
+            self.main_window.setCursor(Qt.CursorShape.WaitCursor)
             self._solid = _load(path)
             self._proj_views = {}
             self.main_window.log(trt("Loaded STEP: {v}", v=path))
         except Exception as e:
             QMessageBox.critical(self.main_window, tr("Load STEP"), str(e))
+        finally:
+            self.main_window.unsetCursor()
 
     def _toggle_angle(self, checked):
         self.main_window.log(
@@ -171,7 +180,9 @@ class TechDrawWorkbench(BaseWorkbench):
             else tr("Projection angle: first-angle"))
 
     def insert_projection(self, view):
-        """Project the loaded STEP solid to 2D and draw it on the page."""
+        """Project the loaded STEP solid to 2D and draw it on the page.
+        FreeCAD visual: black wireframe edges; the projection view can then
+        be moved and dimensioned."""
         if self._solid is None:
             QMessageBox.information(self.main_window, tr("Projection"),
                                     tr("Load a STEP file first."))
@@ -183,7 +194,7 @@ class TechDrawWorkbench(BaseWorkbench):
         if not lines:
             self.main_window.log(tr("Projection produced no geometry."))
             return
-        pen = QPen(_TD_RED, 1.0)
+        pen = QPen(_EDGE, 0)  # 0 = cosmetic, always 1px like FreeCAD edges
         for poly in lines:
             for i in range(len(poly) - 1):
                 x1, y1 = poly[i]
@@ -191,11 +202,52 @@ class TechDrawWorkbench(BaseWorkbench):
                 self.scene.addLine(x1, y1, x2, y2, pen).setZValue(2)
         self.main_window.log(trt("Inserted {v} projection ({n} edges).",
                                  v=view, n=len(lines)))
-        # fit the newly added projection into view
+        self._fit_content()
+
+    def _fit_content(self):
         items = self.scene.items()
         if items:
             self.view.fitInView(self.scene.itemsBoundingRect().adjusted(-40, -40, 40, 40),
                                 Qt.AspectRatioMode.KeepAspectRatio)
+
+    def insert_projection_group(self):
+        """FreeCAD-style: place a standard multi-view set on the page,
+        arranged per the current projection angle (1st/3rd)."""
+        if self._solid is None:
+            QMessageBox.information(self.main_window, tr("Projection"),
+                                    tr("Load a STEP file first."))
+            return
+        from utils.step_loader import project_2d
+        third = self.angle_act.isChecked()
+        # ISO-style 6-view arrangement: FRONT centre; neighbours placed per angle
+        layout = {
+            "FRONT": (0, 0),
+            "TOP": (0, 1 if third else -1),
+            "RIGHT": (1 if third else -1, 0),
+            "LEFT": (-1 if third else 1, 0),
+        }
+        # estimate spacing from the projected extents
+        spacing_x = spacing_y = 80.0
+        for v, (dx, dy) in layout.items():
+            lines = project_2d(self._solid, v)
+            if not lines:
+                continue
+            xs = [p[0] for poly in lines for p in poly]
+            ys = [p[1] for poly in lines for p in poly]
+            cx = (min(xs) + max(xs)) / 2
+            cy = (min(ys) + max(ys)) / 2
+            offx = dx * spacing_x - cx
+            offy = dy * spacing_y - cy
+            pen = QPen(_EDGE, 0)
+            for poly in lines:
+                for i in range(len(poly) - 1):
+                    self.scene.addLine(poly[i][0] + offx, poly[i][1] + offy,
+                                       poly[i + 1][0] + offx, poly[i + 1][1] + offy,
+                                       pen).setZValue(2)
+        self.main_window.log(
+            tr("Projection group inserted (third-angle)")
+            if third else tr("Projection group inserted (first-angle)"))
+        self._fit_content()
 
     def set_mode(self, mode):
         self._mode = mode
