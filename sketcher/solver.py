@@ -59,10 +59,13 @@ def _numeric_jacobian(f, x, eps=1e-7):
 
 
 class SketchSolver:
-    def solve(self, lines, circles, arcs, constraints, points=()):
+    def solve(self, lines, circles, arcs, constraints, points=(), pin=None):
         """
         Solve the constraint system, writing solved coordinates / radii back
-        into the geometry models.
+        into the geometry models. `pin` is an optional list of SketchPoints
+        held at their current coordinates (e.g. the dragged vertex): they are
+        removed from the DOF count and excluded from the rank computation, so
+        the live-drag solve follows the mouse exactly (FreeCAD semantics).
         Returns: (remaining_dof, residual_error, status, redundant)
         """
         geometry = list(lines) + list(circles) + list(arcs) + list(points)
@@ -83,25 +86,42 @@ class SketchSolver:
                 rad_index[o.id] = len(rad_objs)
                 rad_objs.append(o)
 
+        def reg_geom(g):
+            if isinstance(g, SketchPointCls):
+                reg_pt(g)
+            elif hasattr(g, "p1") and hasattr(g, "p2") and not hasattr(g, "radius"):
+                reg_pt(g.p1)
+                reg_pt(g.p2)
+            elif hasattr(g, "radius") and not hasattr(g, "p1"):  # circle
+                reg_pt(g.center)
+                reg_rad(g)
+            elif hasattr(g, "radius"):  # arc
+                reg_pt(g.center)
+                reg_pt(g.p1)
+                reg_pt(g.p2)
+                reg_rad(g)
+
+        from .models import SketchPoint as SketchPointCls
         for p in points:
             reg_pt(p)
         for l in lines:
-            reg_pt(l.p1)
-            reg_pt(l.p2)
+            reg_geom(l)
         for c in circles:
-            reg_pt(c.center)
-            reg_rad(c)
+            reg_geom(c)
         for a in arcs:
-            reg_pt(a.center)
-            reg_pt(a.p1)
-            reg_pt(a.p2)
-            reg_rad(a)
-        # constraint-referenced points not attached to any geometry
+            reg_geom(a)
+        # constraint targets may reference geometry absent from the lists
         for c in constraints:
+            for t in c.get("targets") or ():
+                reg_geom(t)
             for p in c.get("points") or ():
                 reg_pt(p)
             if c.get("point") is not None:
                 reg_pt(c["point"])
+            if c.get("center") is not None:
+                reg_pt(c["center"])
+            if c.get("line") is not None:
+                reg_geom(c["line"])
 
         npts = len(pts)
         nvars = 2 * npts + len(rad_objs)
@@ -277,13 +297,28 @@ class SketchSolver:
         n_user = user_dof_cost()
         n_internal = 2 * len(arcs)
 
+        # --- pinned variables (dragged vertex follows the mouse) ---------
+        pin_idx = set()
+        if pin:
+            for p in pin:
+                if p.id in pt_index:
+                    i = pt_index[p.id]
+                    pin_idx.add(2 * i)
+                    pin_idx.add(2 * i + 1)
+        lb = np.full(nvars, -np.inf)
+        ub = np.full(nvars, np.inf)
+        for j in pin_idx:
+            lb[j] = x0[j] - 1e-9
+            ub[j] = x0[j] + 1e-9
+
         # --- solve -------------------------------------------------------
         if HAS_SCIPY and (n_user + n_internal) > 0:
             # NOTE: tr_solver="exact" (the trf default) mishandles
             # underdetermined systems (fewer residuals than variables) and
             # can stop far from the solution; lsmr converges correctly.
             result = least_squares(lambda v: np.asarray(all_residuals(v), dtype=float),
-                                   x0, method="trf", tr_solver="lsmr")
+                                   x0, method="trf", tr_solver="lsmr",
+                                   bounds=(lb, ub))
             solved = result.x
             residual = float(np.sum(result.fun ** 2))
             # DOF and redundancy come from the Jacobian rank at the solution:
@@ -294,13 +329,13 @@ class SketchSolver:
                 lambda v: np.asarray(all_residuals(v), dtype=float), solved)
             sv = np.linalg.svd(jac, compute_uv=False) if jac.size else np.zeros(0)
             rank = int((sv > sv[0] * 1e-6).sum()) if sv.size else 0
-            dof = max(0, nvars - rank)
+            dof = max(0, nvars - len(pin_idx) - rank)
             redundant = (n_user + n_internal) > rank
         else:
             solved = x0
             residual = float(np.sum(np.asarray(all_residuals(x0), dtype=float) ** 2))
             rank = 0
-            dof = max(0, nvars - n_user - n_internal)
+            dof = max(0, nvars - len(pin_idx) - n_user - n_internal)
             redundant = (n_user + n_internal) > nvars
 
         # --- write back --------------------------------------------------

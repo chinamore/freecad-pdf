@@ -20,8 +20,12 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
    - Export balloon coordinates & metadata to JSON for FAI inspection reports.
 
 3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD Sketcher parity):
-   - Geometry tools: Point `G,P`, Line `G,L`, Polyline `G,M` (continuous chain), Circle `G,C`,
+   - **FreeCAD-style red tool icons** on the toolbar (text lives in the tooltip / status tip).
+   - Geometry tools (single-shot: they return to Select after one shape): Point `G,P`,
+     Line `G,L`, Polyline `G,M` (continuous chain until Esc), Circle `G,C`,
      Arc by center `G,A`, Arc by 3 points `G,3`, Rectangle `G,R`, Triangle `G,T`, Square `G,S`.
+   - **Red vertex handles** at every endpoint / center (line ends, rectangle corners, ...),
+     moving with the geometry.
    - Constraints: Coincident `C`, Point-on-object `O`, Horizontal `H`, Vertical `V`,
      Parallel `P`, Perpendicular `N`, Tangent `T`, Equal `E`, Symmetric `S`, Block `B`,
      Lock `K`, Distance `D`, Distance X `L`, Distance Y `I`, Radius `R`, Diameter, Angle `A`.

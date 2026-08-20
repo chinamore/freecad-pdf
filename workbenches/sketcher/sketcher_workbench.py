@@ -72,6 +72,111 @@ def math_angle(cx, cy, px, py):
     return math.degrees(math.atan2(-(py - cy), px - cx))
 
 
+# ---------------------------------------------------------------- FreeCAD-style icons
+_ICON_RED = QColor(220, 30, 30)
+_ICON_TEXT = QColor(30, 30, 30)
+
+
+def _icon_dots(p, pts, r=2.2):
+    p.setPen(QPen(_ICON_RED, 1.2))
+    p.setBrush(QBrush(_ICON_RED))
+    for x, y in pts:
+        p.drawEllipse(QPointF(x, y), r, r)
+
+
+def _draw_icon_shape(p, kind):
+    """FreeCAD-style red glyph on a transparent canvas (24x24 painter)."""
+    pen = QPen(_ICON_RED, 1.8)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    if kind == "POINT":
+        _icon_dots(p, [(12, 12)], r=3.0)
+    elif kind == "LINE":
+        p.drawLine(5, 19, 19, 5)
+        _icon_dots(p, [(5, 19), (19, 5)])
+    elif kind == "POLYLINE":
+        path = QPainterPath(QPointF(4, 18))
+        path.lineTo(10, 9)
+        path.lineTo(15, 14)
+        path.lineTo(20, 5)
+        p.drawPath(path)
+        _icon_dots(p, [(4, 18), (10, 9), (15, 14), (20, 5)])
+    elif kind == "CIRCLE":
+        p.drawEllipse(QPointF(12, 12), 8, 8)
+        _icon_dots(p, [(12, 12), (12, 4)])
+    elif kind == "ARC_CENTER":
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(4, 4, 16, 16), 0)
+        path.arcTo(QRectF(4, 4, 16, 16), 0, 120)
+        p.drawPath(path)
+        _icon_dots(p, [(12, 12), (20, 12), (8, 5.1)])
+    elif kind == "ARC3":
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(4, 4, 16, 16), 20)
+        path.arcTo(QRectF(4, 4, 16, 16), 20, 140)
+        p.drawPath(path)
+        _icon_dots(p, [(19.5, 9.5), (12, 3.2), (4.8, 14.2)])
+    elif kind == "RECT":
+        p.drawRect(5, 7, 14, 10)
+        _icon_dots(p, [(5, 7), (19, 7), (19, 17), (5, 17)])
+    elif kind == "TRIANGLE":
+        path = QPainterPath(QPointF(12, 5))
+        path.lineTo(20, 18)
+        path.lineTo(4, 18)
+        path.closeSubpath()
+        p.drawPath(path)
+        _icon_dots(p, [(12, 5), (20, 18), (4, 18)])
+    elif kind == "SQUARE":
+        p.drawRect(6, 6, 12, 12)
+        _icon_dots(p, [(6, 6), (18, 6), (18, 18), (6, 18)])
+    elif kind == "CONSTRUCTION":
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setColor(QColor(70, 130, 220))
+        p.setPen(pen)
+        p.drawRect(5, 7, 14, 10)
+    elif kind == "SNAP":
+        _icon_dots(p, [(12, 12)], r=2.5)
+        p.drawLine(12, 3, 12, 7)
+        p.drawLine(12, 17, 12, 21)
+        p.drawLine(3, 12, 7, 12)
+        p.drawLine(17, 12, 21, 12)
+
+
+def make_tool_icon(kind, label=""):
+    """FreeCAD-style red tool icon; optional 1-3 letter overlay like FreeCAD."""
+    from PyQt6.QtGui import QPixmap
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    _draw_icon_shape(p, kind)
+    if label:
+        f = QFont("Arial", 8, QFont.Weight.Bold)
+        p.setFont(f)
+        p.setPen(QPen(_ICON_TEXT))
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight,
+                   label)
+    p.end()
+    from PyQt6.QtGui import QIcon
+    return QIcon(pm)
+
+
+def make_constraint_icon(text):
+    """FreeCAD-style red constraint badge icon (letters only)."""
+    from PyQt6.QtGui import QPixmap, QIcon
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    f = QFont("Arial", 10 if len(text) <= 2 else 8, QFont.Weight.Bold)
+    p.setFont(f)
+    p.setPen(QPen(_ICON_RED))
+    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, text)
+    p.end()
+    return QIcon(pm)
+
+
 class SketcherView(QGraphicsView):
     """Canvas view delegating clicks / drags / keys to the workbench."""
 
@@ -175,6 +280,9 @@ class SketcherWorkbench(BaseWorkbench):
         self._hover_geom = None        # preselection highlight
         self._badge_items = []         # constraint badge items
         self._badge_of_item = {}       # badge item -> constraint dict
+        self._vertex_items = {}        # SketchPoint.id -> red vertex handle item
+        self._vertex_size = 7.0        # handle edge length (scene units)
+        self._preview = None           # rubber-band item while creating
 
         self.solver = SketchSolver()
         self.dof = 0
@@ -211,17 +319,19 @@ class SketcherWorkbench(BaseWorkbench):
         return self.view
 
     def setup_toolbar(self, toolbar):
+        # FreeCAD-style red icons; text lives in the tooltip (and status tip)
         for mode, _, label_key, sc in self.TOOLS:
             label = tr(label_key)
-            act = QAction(label, self.main_window)
+            act = QAction(make_tool_icon(mode), "", self.main_window)
             act.setCheckable(True)
             act.setChecked(self.draw_mode == mode)
             act.setToolTip(f"{label} ({sc})")
+            act.setStatusTip(f"{label} ({sc})")
             act.triggered.connect(
                 lambda checked, m=mode: self.set_draw_mode(m if checked else "SELECT"))
             toolbar.addAction(act)
 
-        constr_act = QAction(tr("Construction"), self.main_window)
+        constr_act = QAction(make_tool_icon("CONSTRUCTION"), "", self.main_window)
         constr_act.setCheckable(True)
         constr_act.setChecked(self.construction_mode)
         constr_act.setToolTip(f"{tr('Construction')} (G, N " + tr("toggles selection") + ")")
@@ -231,9 +341,10 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        snap_act = QAction(tr("Snap"), self.main_window)
+        snap_act = QAction(make_tool_icon("SNAP"), "", self.main_window)
         snap_act.setCheckable(True)
         snap_act.setChecked(self.snap_on)
+        snap_act.setToolTip(tr("Snap"))
         snap_act.triggered.connect(lambda checked: setattr(self, "snap_on", checked))
         toolbar.addAction(snap_act)
         grid_spin = QSpinBox(minimum=1, maximum=100, value=self.grid_step)
@@ -244,48 +355,55 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        for label, sc, handler in (
-            (tr("Coincident"), "C", self.add_coincident_constraint),
-            (tr("Point-on"), "O", self.add_point_on_constraint),
-            ("H", "H", self.add_horizontal_constraint),
-            ("V", "V", self.add_vertical_constraint),
-            (tr("Parallel"), "P", self.add_parallel_constraint),
-            (tr("Perp"), "N", self.add_perpendicular_constraint),
-            (tr("Tangent"), "T", self.add_tangent_constraint),
-            (tr("Equal"), "E", self.add_equal_constraint),
-            (tr("Symmetric"), "S", self.add_symmetric_constraint),
-            (tr("Distance"), "D", self.add_length_constraint),
-            (tr("Dist X"), "L", self.add_distance_x_constraint),
-            (tr("Dist Y"), "I", self.add_distance_y_constraint),
-            (tr("Radius"), "R", self.add_radius_constraint),
-            (tr("Diameter"), "", self.add_diameter_constraint),
-            (tr("Angle"), "A", self.add_angle_constraint),
-            (tr("Lock"), "K", self.add_lock_constraint),
-            (tr("Block"), "B", self.add_block_constraint),
+        for icon_text, label, sc, handler in (
+            ("C", tr("Coincident"), "C", self.add_coincident_constraint),
+            ("O", tr("Point-on"), "O", self.add_point_on_constraint),
+            ("H", "H", "H", self.add_horizontal_constraint),
+            ("V", "V", "V", self.add_vertical_constraint),
+            ("//", tr("Parallel"), "P", self.add_parallel_constraint),
+            ("N", tr("Perp"), "N", self.add_perpendicular_constraint),
+            ("T", tr("Tangent"), "T", self.add_tangent_constraint),
+            ("=", tr("Equal"), "E", self.add_equal_constraint),
+            ("SYM", tr("Symmetric"), "S", self.add_symmetric_constraint),
+            ("D", tr("Distance"), "D", self.add_length_constraint),
+            ("DX", tr("Dist X"), "L", self.add_distance_x_constraint),
+            ("DY", tr("Dist Y"), "I", self.add_distance_y_constraint),
+            ("R", tr("Radius"), "R", self.add_radius_constraint),
+            ("DIA", tr("Diameter"), "", self.add_diameter_constraint),
+            ("A", tr("Angle"), "A", self.add_angle_constraint),
+            ("LK", tr("Lock"), "K", self.add_lock_constraint),
+            ("BLK", tr("Block"), "B", self.add_block_constraint),
         ):
-            act = QAction(label, self.main_window)
-            if sc:
-                act.setToolTip(f"{label} ({sc})")
+            act = QAction(make_constraint_icon(icon_text), "", self.main_window)
+            tip = f"{label} ({sc})" if sc else label
+            act.setToolTip(tip)
+            act.setStatusTip(tip)
             act.triggered.connect(handler)
             toolbar.addAction(act)
 
         toolbar.addSeparator()
 
-        undo_act = QAction(tr("Undo"), self.main_window)
+        undo_act = QAction(make_constraint_icon("<<"), "", self.main_window)
         undo_act.setToolTip(f"{tr('Undo')} (Ctrl+Z)")
         undo_act.triggered.connect(self.undo)
         toolbar.addAction(undo_act)
-        redo_act = QAction(tr("Redo"), self.main_window)
+        redo_act = QAction(make_constraint_icon(">>"), "", self.main_window)
         redo_act.setToolTip(f"{tr('Redo')} (Ctrl+Shift+Z)")
         redo_act.triggered.connect(self.redo)
         toolbar.addAction(redo_act)
-        delete_act = QAction(tr("Delete"), self.main_window)
+        delete_act = QAction(make_constraint_icon("X"), "", self.main_window)
         delete_act.setToolTip(f"{tr('Delete')} (Del)")
         delete_act.triggered.connect(self.delete_selected)
         toolbar.addAction(delete_act)
-        clear_act = QAction(tr("Clear"), self.main_window)
+        clear_act = QAction(make_constraint_icon("CLR"), "", self.main_window)
+        clear_act.setToolTip(tr("Clear"))
         clear_act.triggered.connect(self.clear_sketch)
         toolbar.addAction(clear_act)
+
+        dxf_act = QAction(make_constraint_icon("DXF"), "", self.main_window)
+        dxf_act.setToolTip(tr("Save as 2D CAD (DXF)"))
+        dxf_act.triggered.connect(self.export_dxf)
+        toolbar.addAction(dxf_act)
 
         self.dof_label = QLabel(self._dof_text)
         toolbar.addWidget(self.dof_label)
@@ -326,6 +444,7 @@ class SketcherWorkbench(BaseWorkbench):
         self.temp_points = []
         self._poly_last = None
         self._pick = None
+        self._clear_preview()
         self.main_window.log(trt("Sketcher tool: {v}", v=mode))
 
     def cancel_temp(self):
@@ -336,6 +455,7 @@ class SketcherWorkbench(BaseWorkbench):
         if self.temp_points or self._poly_last is not None:
             self.temp_points = []
             self._poly_last = None
+            self._clear_preview()
             self.main_window.log(tr("In-progress geometry cancelled."))
 
     # ------------------------------------------------------------------ models
@@ -395,6 +515,7 @@ class SketcherWorkbench(BaseWorkbench):
         grab = self._nearest_point(pos)
         if grab is not None:
             points = [grab]
+            locked = {"mode": "point"}
         else:
             geom = self._find_geom_at(pos)
             if geom is None:
@@ -404,9 +525,17 @@ class SketcherWorkbench(BaseWorkbench):
                 if p.id not in seen:
                     seen.add(p.id)
                     points.append(p)
+            locked = {"mode": "body", "geom": geom, "shape": self._shape_of(geom)}
         self.snapshot()  # one undo step per drag
-        self._drag = {"points": points, "last": QPointF(pos)}
+        self._drag = {"points": points, "last": QPointF(pos), **locked}
         return True
+
+    def _shape_of(self, geom):
+        """Rigid relative offsets of a geometry's points (for body drag)."""
+        if isinstance(geom, SketchPoint):
+            return {}
+        base = self._geom_points(geom)[0]
+        return {p.id: (p.x - base.x, p.y - base.y) for p in self._geom_points(geom)}
 
     def update_drag(self, pos):
         if self._drag is None:
@@ -421,8 +550,16 @@ class SketcherWorkbench(BaseWorkbench):
             p.x += dx
             p.y += dy
             moved.add(p.id)
-        # FreeCAD live-solve: constraints move along in real time
+        # FreeCAD live-solve: constraints move along in real time; a whole
+        # body is translated RIGIDLY (shape preserved), points follow freely
         self._live_solve()
+        if self._drag.get("mode") == "body":
+            geom = self._drag["geom"]
+            base = self._geom_points(geom)[0]
+            for p in self._geom_points(geom):
+                rx, ry = self._drag["shape"][p.id]
+                p.x, p.y = base.x + rx, base.y + ry
+                moved.add(p.id)
         for geom in self._all_geometry():
             if any(pt.id in moved for pt in self._geom_points(geom)):
                 self.update_item(geom)
@@ -436,24 +573,142 @@ class SketcherWorkbench(BaseWorkbench):
         return True
 
     def _live_solve(self):
-        """Solve without log noise (used while dragging)."""
+        """Solve without log noise (used while dragging). The dragged
+        points are pinned at the mouse so the geometry follows exactly."""
+        pin = self._drag["points"] if self._drag else None
         try:
             self.dof, _, self.status, _ = self.solver.solve(
-                self.lines, self.circles, self.arcs, self.constraints, self.points)
+                self.lines, self.circles, self.arcs, self.constraints,
+                self.points, pin=pin)
         except Exception:
             return
         for geom in self._all_geometry():
             self.update_item(geom)
         self._update_dof_label()
+        self._update_vertex_positions()
 
     # ------------------------------------------------------------------ hover
+    # ------------------------------------------------------------------ vertices
+    def _rebuild_vertices(self):
+        """FreeCAD-style red vertex handles at every endpoint / center."""
+        for item in self._vertex_items.values():
+            self.scene.removeItem(item)
+        self._vertex_items = {}
+        for p in self.all_points():
+            self._vertex_items[p.id] = self._make_vertex(p)
+
+    def _make_vertex(self, p):
+        s = self._vertex_size / 2
+        item = self.scene.addRect(p.x - s, p.y - s, self._vertex_size,
+                                  self._vertex_size,
+                                  QPen(QColor(200, 0, 0), 1.5), QBrush(QColor(255, 60, 60)))
+        item.setZValue(50)
+        return item
+
+    def _update_vertex_positions(self):
+        for p in self.all_points():
+            item = self._vertex_items.get(p.id)
+            if item is not None:
+                s = self._vertex_size / 2
+                item.setRect(p.x - s, p.y - s, self._vertex_size, self._vertex_size)
+
     def on_hover(self, pos):
         """FreeCAD-style preselection highlight (light blue)."""
+        self._update_preview(pos)
         if self.draw_mode != "SELECT" or self._drag is not None:
             self._set_hover(None)
             return
         geom = self._find_geom_at(pos)
         self._set_hover(geom)
+
+    # ------------------------------------------------------------------ rubber-band preview
+    def _clear_preview(self):
+        if self._preview is not None:
+            self.scene.removeItem(self._preview)
+            self._preview = None
+
+    def _update_preview(self, pos):
+        """Rubber-band the shape being created so it follows the mouse."""
+        mode = self.draw_mode
+        n = len(self.temp_points)
+        if mode == "SELECT" or (n == 0 and mode != "POLYLINE"):
+            self._clear_preview()
+            return
+        sp, _ = self.snap(pos)
+        pen = QPen(C_PRESEL, 1.5, Qt.PenStyle.DashLine)
+        path = QPainterPath()
+        valid = False
+        anchor = None
+        if mode == "POLYLINE" and self._poly_last is not None:
+            anchor = QPointF(self._poly_last.x, self._poly_last.y)
+        elif n >= 1:
+            anchor = self.temp_points[-1][0]
+        if mode in ("LINE", "POLYLINE") and anchor is not None:
+            path.moveTo(anchor)
+            path.lineTo(sp)
+            valid = True
+        elif mode == "RECT" and anchor is not None:
+            path.addRect(QRectF(anchor, sp).normalized())
+            valid = True
+        elif mode == "CIRCLE" and anchor is not None:
+            r = math.hypot(sp.x() - anchor.x(), sp.y() - anchor.y())
+            path.addEllipse(anchor.x() - r, anchor.y() - r, 2 * r, 2 * r)
+            valid = True
+        elif mode in ("TRIANGLE", "SQUARE") and anchor is not None:
+            sides = 3 if mode == "TRIANGLE" else 4
+            cx, cy = anchor.x(), anchor.y()
+            r = math.hypot(sp.x() - cx, sp.y() - cy)
+            a0 = math.atan2(sp.y() - cy, sp.x() - cx)
+            pts = [(cx + r * math.cos(a0 + 2 * math.pi * i / sides),
+                    cy + r * math.sin(a0 + 2 * math.pi * i / sides))
+                   for i in range(sides)]
+            path.moveTo(*pts[0])
+            for q in pts[1:]:
+                path.lineTo(*q)
+            path.closeSubpath()
+            valid = True
+        elif mode == "ARC3" and n == 1 and anchor is not None:
+            path.moveTo(anchor)
+            path.lineTo(sp)
+            valid = True
+        elif mode == "ARC3" and n == 2:
+            (s1, _), (s2, _) = self.temp_points
+            cc = circumcenter(s1.x(), s1.y(), s2.x(), s2.y(), sp.x(), sp.y())
+            if cc is not None:
+                r = math.hypot(s1.x() - cc[0], s1.y() - cc[1])
+                rect = QRectF(cc[0] - r, cc[1] - r, 2 * r, 2 * r)
+                a1 = math_angle(cc[0], cc[1], s1.x(), s1.y())
+                am = math_angle(cc[0], cc[1], s2.x(), s2.y())
+                a2 = math_angle(cc[0], cc[1], sp.x(), sp.y())
+                span = (a2 - a1) % 360
+                if (am - a1) % 360 > span:
+                    span -= 360
+                path.arcMoveTo(rect, a1)
+                path.arcTo(rect, a1, span)
+                valid = True
+        elif mode == "ARC_CENTER" and n == 1 and anchor is not None:
+            r = math.hypot(sp.x() - anchor.x(), sp.y() - anchor.y())
+            path.addEllipse(anchor.x() - r, anchor.y() - r, 2 * r, 2 * r)
+            valid = True
+        elif mode == "ARC_CENTER" and n == 2:
+            (sc, _), (sr, _) = self.temp_points
+            r = math.hypot(sr.x() - sc.x(), sr.y() - sc.y())
+            if r > 0.5:
+                rect = QRectF(sc.x() - r, sc.y() - r, 2 * r, 2 * r)
+                a1 = math_angle(sc.x(), sc.y(), sr.x(), sr.y())
+                a2 = math_angle(sc.x(), sc.y(), sp.x(), sp.y())
+                path.arcMoveTo(rect, a1)
+                path.arcTo(rect, a1, (a2 - a1) % 360)
+                valid = True
+        if not valid:
+            self._clear_preview()
+            return
+        if self._preview is None:
+            self._preview = QGraphicsPathItem()
+            self._preview.setZValue(60)
+            self.scene.addItem(self._preview)
+        self._preview.setPath(path)
+        self._preview.setPen(pen)
 
     def _set_hover(self, geom):
         if geom is self._hover_geom:
@@ -793,13 +1048,13 @@ class SketcherWorkbench(BaseWorkbench):
         if self.draw_mode == "POINT":
             (s, e), = self.temp_points
             self.add_point_geom(e or SketchPoint(s.x(), s.y()))
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode == "LINE" and len(self.temp_points) == 2:
             (s1, e1), (s2, e2) = self.temp_points
             p1 = e1 or SketchPoint(s1.x(), s1.y())
             p2 = e2 or SketchPoint(s2.x(), s2.y())
             self.add_line(p1, p2, auto_constrain=True)
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode == "POLYLINE":
             # continuous chain: every click after the first emits a segment
             (s, e) = self.temp_points[-1]
@@ -817,29 +1072,29 @@ class SketcherWorkbench(BaseWorkbench):
             center = e1 or SketchPoint(s1.x(), s1.y())
             radius = math.hypot(s2.x() - center.x, s2.y() - center.y)
             self.add_circle(center, radius)
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode == "ARC3" and len(self.temp_points) == 3:
             (s1, e1), (s2, _), (s3, e3) = self.temp_points
             p1 = e1 or SketchPoint(s1.x(), s1.y())
             p2 = e3 or SketchPoint(s3.x(), s3.y())
             self.add_arc(p1, (s2.x(), s2.y()), p2)
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode == "ARC_CENTER" and len(self.temp_points) == 3:
             (s1, e1), (s2, e2), (s3, _) = self.temp_points
             center = e1 or SketchPoint(s1.x(), s1.y())
             p1 = e2 or SketchPoint(s2.x(), s2.y())
             a2 = math_angle(center.x, center.y, s3.x(), s3.y())
             self.add_arc_center(center, p1, a2)
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode == "RECT" and len(self.temp_points) == 2:
             (s1, _), (s2, _) = self.temp_points
             self.add_rectangle((s1.x(), s1.y()), (s2.x(), s2.y()))
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         elif self.draw_mode in ("TRIANGLE", "SQUARE") and len(self.temp_points) == 2:
             (s1, _), (s2, _) = self.temp_points
             self.add_polygon((s1.x(), s1.y()), (s2.x(), s2.y()),
                              3 if self.draw_mode == "TRIANGLE" else 4)
-            self.temp_points = []
+            self.set_draw_mode("SELECT")  # single-shot tool
         return True
 
     def on_double_click(self, pos):
@@ -857,6 +1112,11 @@ class SketcherWorkbench(BaseWorkbench):
     def selected_geometry(self):
         return [self.geom_of_item[it] for it in self.scene.selectedItems()
                 if it in self.geom_of_item]
+
+    def _picked_points(self):
+        """SketchPoints collected via pick-clicks (used for point constraints)."""
+        return [obj for obj in (self._pick["got"] if self._pick else [])
+                if isinstance(obj, SketchPoint)]
 
     def _resolve_slot(self, kind, pos):
         """Resolve one pick-slot from a click; returns object or None."""
@@ -902,8 +1162,33 @@ class SketcherWorkbench(BaseWorkbench):
                    what=", ".join(desc[k] for k in self._SLOTS[ctype]), c=ctype)
 
     def _collect_preselected(self, kinds):
-        """Map the current scene selection onto the required slots, or None."""
-        geoms = self.selected_geometry()
+        """FreeCAD-style: match scene selection against the required slots.
+        Geometry click-selected on the canvas; standalone SketchPoints picked
+        in pick mode count as endpoint selections."""
+        picked = self._picked_points()
+        if any(k in ("point", "line_or_point", "curve_or_point", "point_or_end")
+               for k in kinds) and picked:
+            got = []
+            pool = list(picked) + [
+                g for g in (self.lines + self.circles + self.arcs)
+                if self.item_of_geom.get(g.id) is not None
+                and self.item_of_geom[g.id].isSelected()]
+            for kind in kinds:
+                match = None
+                for g in pool:
+                    if self._slot_matches(kind, g) or (
+                            kind in ("point", "line_or_point", "curve_or_point",
+                                     "point_or_end") and isinstance(g, SketchPoint)):
+                        match = g
+                        break
+                if match is None:
+                    return None
+                got.append(match)
+                pool.remove(match)
+            return got
+        geoms = [g for g in (self.lines + self.circles + self.arcs + self.points)
+                 if self.item_of_geom.get(g.id) is not None
+                 and self.item_of_geom[g.id].isSelected()]
         if not geoms:
             return None
         got = []
@@ -1020,6 +1305,9 @@ class SketcherWorkbench(BaseWorkbench):
                 c["point"] = pa
             if c.get("center") is pb:
                 c["center"] = pa
+        vitem = self._vertex_items.pop(pb.id, None)  # merged point handle
+        if vitem is not None:
+            self.scene.removeItem(vitem)
         self.main_window.log(trt("COINCIDENT: points merged at ({x}, {y}).",
                                  x=round(pa.x, 1), y=round(pa.y, 1)))
         self.solve_sketch()
@@ -1186,6 +1474,7 @@ class SketcherWorkbench(BaseWorkbench):
             self.lines, self.circles, self.arcs, self.constraints, self.points)
         self._restyle()
         self._rebuild_badges()
+        self._rebuild_vertices()
 
         if self.status == STATUS_FULL:
             msg = tr("Fully constrained sketch")
@@ -1367,12 +1656,14 @@ class SketcherWorkbench(BaseWorkbench):
         self._poly_last = None
         self._pick = None
         self._drag = None
+        self._clear_preview()
         for item in list(self.item_of_geom.values()):
             self.scene.removeItem(item)
         self.item_of_geom, self.geom_of_item = {}, {}
         for geom in self._all_geometry():
             self.draw_item(geom)
         self.solve_sketch()
+        self._rebuild_vertices()
 
     # ------------------------------------------------------------------ editing
     def delete_selected(self):
@@ -1390,6 +1681,10 @@ class SketcherWorkbench(BaseWorkbench):
             if item is not None:
                 self.geom_of_item.pop(item, None)
                 self.scene.removeItem(item)
+            for p in self._geom_points(g):
+                vitem = self._vertex_items.pop(p.id, None)
+                if vitem is not None:
+                    self.scene.removeItem(vitem)
         self.constraints = [
             c for c in self.constraints
             if all(id(t) not in dead for t in (c.get("targets") or ()))
@@ -1408,6 +1703,9 @@ class SketcherWorkbench(BaseWorkbench):
             [], [], [], [], []
         for item in list(self.item_of_geom.values()):
             self.scene.removeItem(item)
+        for item in list(self._vertex_items.values()):
+            self.scene.removeItem(item)
+        self._vertex_items = {}
         self.item_of_geom, self.geom_of_item = {}, {}
         self.temp_points = []
         self._poly_last = None
@@ -1454,6 +1752,67 @@ class SketcherWorkbench(BaseWorkbench):
         for i, (key, value) in enumerate(rows):
             property_table.setItem(i, 0, QTableWidgetItem(key))
             property_table.setItem(i, 1, QTableWidgetItem(value))
+
+    def _arc_sweep(self, arc):
+        """(start_angle, end_angle) in math y-up degrees, respecting `mid`."""
+        a1 = math_angle(arc.center.x, arc.center.y, arc.p1.x, arc.p1.y)
+        am = math_angle(arc.center.x, arc.center.y, *arc.mid)
+        a2 = math_angle(arc.center.x, arc.center.y, arc.p2.x, arc.p2.y)
+        span = (a2 - a1) % 360
+        if (am - a1) % 360 > span:
+            # clockwise sweep: exchange so DXF CCW covers the same points
+            return a2, a1
+        return a1, a2
+
+    def export_dxf(self):
+        """FreeCAD-style 'Save as 2D CAD': export the sketch as a DXF file."""
+        if not self._all_geometry():
+            QMessageBox.information(self.main_window, tr("Export 2D CAD"),
+                                    tr("The sketch is empty."))
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.main_window, tr("Save as 2D CAD (DXF)"), "",
+            tr("DXF Files (*.dxf)"))
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".dxf"):
+            file_path += ".dxf"
+        # Qt scene y-down -> DXF math y-up
+        out = ["0", "SECTION", "2", "ENTITIES"]
+
+        def add_line(x1, y1, x2, y2):
+            out += ["0", "LINE", "8", "0",
+                    "10", f"{x1}", "20", f"{-y1}",
+                    "11", f"{x2}", "21", f"{-y2}"]
+
+        for l in self.lines:
+            add_line(l.p1.x, l.p1.y, l.p2.x, l.p2.y)
+        for c in self.circles:
+            out += ["0", "CIRCLE", "8", "0",
+                    "10", f"{c.center.x}", "20", f"{-c.center.y}",
+                    "40", f"{c.radius}"]
+        for a in self.arcs:
+            a1, a2 = self._arc_sweep(a)
+            out += ["0", "ARC", "8", "0",
+                    "10", f"{a.center.x}", "20", f"{-a.center.y}",
+                    "40", f"{a.radius}", "50", f"{a1}", "51", f"{a2}"]
+        for p in self.points:
+            out += ["0", "POINT", "8", "0",
+                    "10", f"{p.x}", "20", f"{-p.y}"]
+        out += ["0", "ENDSEC", "0", "EOF"]
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(out) + "\n")
+        except OSError as e:
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Could not write file:") + f"\n{e}")
+            return
+        QMessageBox.information(
+            self.main_window, tr("Exported"),
+            f"DXF saved: {file_path}\n"
+            f"{len(self.lines)} lines, {len(self.circles)} circles, "
+            f"{len(self.arcs)} arcs, {len(self.points)} points")
+        self.main_window.log(trt("2D CAD (DXF) saved to {v}", v=file_path))
 
     def export_data(self):
         file_path, _ = QFileDialog.getSaveFileName(

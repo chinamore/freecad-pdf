@@ -233,6 +233,12 @@ TEMPLATES = {
     "curve or point": "曲线或点",
     "second point": "第二个点",
     "Points / Lines / Circles / Arcs": "点 / 直线 / 圆 / 圆弧",
+    "2D CAD": "2D CAD",
+    "Save as 2D CAD (DXF)": "另存为 2D CAD (DXF)",
+    "DXF Files (*.dxf)": "DXF 文件 (*.dxf)",
+    "Export 2D CAD": "导出 2D CAD",
+    "The sketch is empty.": "草图为空。",
+    "2D CAD (DXF) saved to {v}": "2D CAD (DXF) 已保存至 {v}",
 }
 
 
