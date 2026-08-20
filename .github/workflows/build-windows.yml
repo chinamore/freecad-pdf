@@ -31,7 +31,7 @@ jobs:
       - name: Build EXE with PyInstaller
         shell: powershell
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name "PDFBubbleAnnotator" --icon assets/icon.ico --add-data "assets;assets" main.py
+          pyinstaller --noconfirm --onefile --windowed --name "PDFBubbleAnnotator" --icon assets/icon.ico --add-data "assets;assets" --hidden-import ezdwg --collect-all cadquery --collect-all OCP main.py
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
