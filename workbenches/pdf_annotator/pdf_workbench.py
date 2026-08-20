@@ -57,7 +57,18 @@ class BubbleItem(QGraphicsItemGroup):
             QGraphicsItemGroup.GraphicsItemFlag.ItemIsSelectable |
             QGraphicsItemGroup.GraphicsItemFlag.ItemSendsGeometryChanges
         )
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.sync()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.wb.snapshot()  # make the upcoming drag undoable
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(event)
 
     def sync(self):
         b = self.bubble
@@ -107,16 +118,22 @@ class PDFCanvasView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setMouseTracking(True)
 
+    def _bubble_at(self, view_pos):
+        item = self.itemAt(view_pos)
+        while item is not None and not isinstance(item, BubbleItem):
+            item = item.parentItem()
+        return item
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.wb.add_mode:
-            pos = self.mapToScene(event.pos())
-            if self.wb.point_on_page(pos):
-                self.wb.add_bubble_at(pos)
-                return
+            # Clicking an existing balloon selects/drags it instead of adding
+            if self._bubble_at(event.pos()) is None:
+                pos = self.mapToScene(event.pos())
+                if self.wb.point_on_page(pos):
+                    self.wb.add_bubble_at(pos)
+                    return
         if event.button() == Qt.MouseButton.RightButton:
-            item = self.itemAt(event.pos())
-            while item is not None and not isinstance(item, BubbleItem):
-                item = item.parentItem()
+            item = self._bubble_at(event.pos())
             if item is not None:
                 self.wb.remove_bubble(item.bubble.id)
                 return
@@ -238,8 +255,16 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         add_act = QAction(tr("Add Bubble"), self.main_window)
         add_act.setCheckable(True)
         add_act.setChecked(self.add_mode)
+        add_act.setShortcut("B")
+        add_act.setToolTip(f"{tr('Add Bubble')} (B)")
         add_act.triggered.connect(self.toggle_add_mode)
         toolbar.addAction(add_act)
+
+        del_act = QAction(tr("Delete"), self.main_window)
+        del_act.setShortcut(Qt.Key.Key_Delete)
+        del_act.setToolTip(f"{tr('Delete')} (Del)")
+        del_act.triggered.connect(self.remove_selected)
+        toolbar.addAction(del_act)
 
         # Widgets are rebuilt on every switch; values live in ui_state
         def spin(key, lo, hi, w):
@@ -466,8 +491,12 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.update_dock_views(self.main_window.tree_list, self.main_window.property_table)
 
     def remove_selected(self):
-        if self.selected_id:
-            self.remove_bubble(self.selected_id)
+        ids = [it.bubble.id for it in self.scene.selectedItems()
+               if isinstance(it, BubbleItem)]
+        if self.selected_id and self.selected_id not in ids:
+            ids.append(self.selected_id)
+        for bid in ids:
+            self.remove_bubble(bid)
 
     def _on_selection_changed(self):
         selected = [it for it in self.scene.selectedItems() if isinstance(it, BubbleItem)]

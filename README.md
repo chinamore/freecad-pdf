@@ -19,18 +19,29 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
    - Vector PDF export (balloons drawn into a copy of the source PDF), current-page PNG, batch PNG, and printing.
    - Export balloon coordinates & metadata to JSON for FAI inspection reports.
 
-3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD-style parametric sketcher):
-   - Geometry tools: Line, Circle, 3-point Arc, Rectangle (auto H/V constraints).
-   - **Drag & drop editing**: grab endpoints or whole geometry in select mode; constraints
-     are re-imposed by the solver on release.
-   - **FreeCAD-style shortcuts**: `G`+`L/C/A/R` create tools, `C` coincident, `H/V` horizontal/vertical,
-     `P` parallel, `N` perpendicular, `E` equal, `K` lock, `D` construction mode, `S` solve,
-     `Esc` cancel/select, `Del` delete.
-   - Grid & endpoint snapping (shared points = structural coincidence), construction geometry mode.
-   - Constraints: Coincident, Horizontal, Vertical, Parallel, Perpendicular, Equal, Length, Radius, Lock.
+3. **Workbench 2: 2D Sketcher Workbench** (FreeCAD Sketcher parity):
+   - Geometry tools: Point `G,P`, Line `G,L`, Polyline `G,M` (continuous chain), Circle `G,C`,
+     Arc by center `G,A`, Arc by 3 points `G,3`, Rectangle `G,R`, Triangle `G,T`, Square `G,S`.
+   - Constraints: Coincident `C`, Point-on-object `O`, Horizontal `H`, Vertical `V`,
+     Parallel `P`, Perpendicular `N`, Tangent `T`, Equal `E`, Symmetric `S`, Block `B`,
+     Lock `K`, Distance `D`, Distance X `L`, Distance Y `I`, Radius `R`, Diameter, Angle `A`.
+   - FreeCAD interaction: press the shortcut then click the targets (pick workflow), or
+     pre-select then apply; constraint command leaves the active tool like FreeCAD.
+   - **Drag & drop with LIVE solve**: grab a vertex or a whole curve; constraints follow
+     in real time and are re-imposed on release.
+   - **Auto-constraints** on creation (nearly axis-aligned lines get H/V; snapped endpoints
+     become structural coincidence = shared points).
+   - **Constraint badges** on the canvas (H, V, //, T+, =, TAN, SYM, ON, LK, BLK, D/DX/DY/R/DIA/deg
+     values), stacked side-by-side like FreeCAD; **double-click a dimensional badge to edit
+     its value**, right-click a badge to remove the constraint.
+   - Colour semantics: normal black / construction blue / selected yellow / preselection
+     light blue / fully-constrained green / conflicting red.
+   - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`) covering geometry, constraints, drags.
+   - `G,N` toggles construction geometry of the selection; grid & endpoint snapping;
+     continuous creation mode; Esc / right-click cancels.
    - SciPy least-squares solver (LSMR trust-region solver, numerically stable for
      underdetermined sketches) with shared-variable deduplication, DOF analysis,
-     over-constraint detection, and fully-constrained green highlighting.
+     over-constraint detection, and fully-constrained highlighting.
    - Coordinate Transformer (Mapping PDF Page Points to Physical Sketch mm space).
 
 ---

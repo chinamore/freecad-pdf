@@ -9,6 +9,7 @@ class SketchPoint:
     x: float
     y: float
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    is_construction: bool = False  # only used for standalone point geometry
 
 @dataclass
 class SketchLine:
