@@ -213,18 +213,20 @@ class SketchSolver:
                     else:
                         res.append(line_len(v, tg[0]) - line_len(v, tg[1]))
                 elif t == "SYMMETRIC":
-                    p1, p2 = c["points"]
-                    p1x, p1y = P(v, p1)
-                    p2x, p2y = P(v, p2)
-                    if c.get("line") is not None:
-                        ax, ay = P(v, c["line"].p1)
-                        ux, uy = uvec(v, c["line"])
-                        proj = (p1x - ax) * ux + (p1y - ay) * uy
-                        fx, fy = ax + proj * ux, ay + proj * uy  # foot of p1
-                        res += [p2x - (2 * fx - p1x), p2y - (2 * fy - p1y)]
-                    else:
-                        cx, cy = P(v, c["center"])
-                        res += [p2x + p1x - 2 * cx, p2y + p1y - 2 * cy]
+                    pts = c["points"]  # flat list; pairs (0,1),(2,3),...
+                    for k in range(0, len(pts) - 1, 2):
+                        p1, p2 = pts[k], pts[k + 1]
+                        p1x, p1y = P(v, p1)
+                        p2x, p2y = P(v, p2)
+                        if c.get("line") is not None:
+                            ax, ay = P(v, c["line"].p1)
+                            ux, uy = uvec(v, c["line"])
+                            proj = (p1x - ax) * ux + (p1y - ay) * uy
+                            fx, fy = ax + proj * ux, ay + proj * uy
+                            res += [p2x - (2 * fx - p1x), p2y - (2 * fy - p1y)]
+                        else:
+                            cx, cy = P(v, c["center"])
+                            res += [p2x + p1x - 2 * cx, p2y + p1y - 2 * cy]
                 elif t == "POINT_ON":
                     g = tg[0]
                     p = c["point"]
@@ -288,7 +290,7 @@ class SketchSolver:
                 if t in ("LOCK", "BLOCK"):
                     n += 2 * len(c["points"]) + (1 if c.get("radius") is not None else 0)
                 elif t == "SYMMETRIC":
-                    n += 2
+                    n += 2 * max(1, (len(c.get("points") or ())) // 2)
                 elif t == "TANGENT" and not is_round(c["targets"][0]) \
                         and not is_round(c["targets"][1]):
                     n += 2

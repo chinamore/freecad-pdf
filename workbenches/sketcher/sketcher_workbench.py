@@ -1637,6 +1637,24 @@ class SketcherWorkbench(BaseWorkbench):
             return
         if ctype == "SYMMETRIC":
             p1, p2, axis = got
+            # FreeCAD semantics: symmetric is between TWO DISTINCT points
+            # (e.g. two corners of a rectangle). If the two picked points are
+            # the endpoints of the SAME line the user almost certainly wants
+            # to mirror that whole line, which is a degenerate/ambiguous case
+            # - guard against collapsing it to a point.
+            parents1 = [g for g in self._all_geometry()
+                        if p1 in self._geom_points(g)]
+            parents2 = [g for g in self._all_geometry()
+                        if p2 in self._geom_points(g)]
+            shared = [g for g in parents1 if g in parents2]
+            # endpoints of the SAME line would be driven to the same place by
+            # symmetry - reject so it never collapses to a point
+            if any(isinstance(g, SketchLine) for g in shared):
+                self.main_window.log(
+                    tr("Symmetric needs two DIFFERENT points (e.g. two "
+                       "corners). For a single line, mirror its endpoints "
+                       "about the axis instead."))
+                return
             c = {"type": "SYMMETRIC", "targets": [], "points": [p1, p2]}
             if isinstance(axis, SketchLine):
                 c["line"] = axis
@@ -1644,9 +1662,20 @@ class SketcherWorkbench(BaseWorkbench):
                 c["center"] = axis
             self.snapshot()
             self.constraints.append(c)
+            # FreeCAD keeps the length of a mirrored object by making the
+            # symmetry the driving relation; pair the picked points and let
+            # the solver keep distances. If it conflicts, _solve_checked
+            # warns and rolls back instead of collapsing geometry.
             self.main_window.log(tr("SYMMETRIC constraint added."))
-            self.solve_sketch()
+            self._solve_checked(c)
             return
+
+    def add_mirror_line_about_axis(self):
+        """FreeCAD-style: mirror a whole line about an axis line (keeps the
+        original length by construction)."""
+        self.main_window.log(tr("Mirror: select the line, then the axis line."))
+        self._pick = {"type": "_MIRROR", "kinds": ["line", "line"], "got": []}
+
         if ctype in ("LOCK", "BLOCK"):
             self._apply_lock(ctype, got[0])
             return
@@ -1940,8 +1969,10 @@ class SketcherWorkbench(BaseWorkbench):
             return "=", line_mid(tg[0]) if isinstance(tg[0], SketchLine) \
                 else round_pos(tg[0]), geo
         if t == "SYMMETRIC":
-            p1, p2 = c["points"]
-            return "SYM", QPointF((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 14), geo
+            pts = c["points"]
+            x = sum(p.x for p in pts) / len(pts)
+            y = sum(p.y for p in pts) / len(pts)
+            return "SYM", QPointF(x, y - 14), geo
         if t == "POINT_ON":
             p = c["point"]
             return "ON", QPointF(p.x + 8, p.y - 16), geo

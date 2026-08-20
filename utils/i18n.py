@@ -216,6 +216,11 @@ TEMPLATES = {
     "Edit Constraint": "编辑约束",
     "POINT_ON constraint added.": "已添加点在对象上约束。",
     "SYMMETRIC constraint added.": "已添加对称约束。",
+    "SYMMETRIC constraint added ({n} pairs).": "已添加对称约束（{n} 对）。",
+    "Symmetric needs two DIFFERENT points (e.g. two "
+    "corners). For a single line, mirror its endpoints "
+    "about the axis instead.":
+        "对称需要两个不同的点（如矩形的两个角点）。镜像整条线请用轴对称工具。",
     "{c} constraint added.": "已添加 {c} 约束。",
     "{c} = {v} constraint added.": "已添加 {c} = {v} 约束。",
     "ANGLE = {v} deg constraint added.": "已添加角度 = {v}° 约束。",
