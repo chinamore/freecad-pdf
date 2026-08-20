@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtGui import QPen, QColor, QAction, QPainter, QPainterPath
 
+from utils.i18n import tr, trt
 from workbenches.base_workbench import BaseWorkbench
 from sketcher.models import SketchPoint, SketchLine, SketchCircle, SketchArc
 from sketcher.solver import (
@@ -97,11 +98,9 @@ class SketcherWorkbench(BaseWorkbench):
 
         self._draw_grid()
 
-        # Persistent toolbar widgets
-        self.grid_spin = QSpinBox(minimum=1, maximum=100, value=self.grid_step)
-        self.grid_spin.setFixedWidth(52)
-        self.grid_spin.valueChanged.connect(lambda v: setattr(self, "grid_step", v))
-        self.dof_label = QLabel(" DOF: — ")
+        # Toolbar label state (the QLabel itself is rebuilt on every
+        # workbench switch; see PDF workbench for the rationale)
+        self._dof_text = f" {tr('DOF:')} — "
 
     # ------------------------------------------------------------------ UI
     def _draw_grid(self):
@@ -118,8 +117,8 @@ class SketcherWorkbench(BaseWorkbench):
         return self.view
 
     def setup_toolbar(self, toolbar):
-        for label, mode in (("Line", "LINE"), ("Circle", "CIRCLE"),
-                            ("Arc", "ARC"), ("Rect", "RECT")):
+        for label, mode in ((tr("Line"), "LINE"), (tr("Circle"), "CIRCLE"),
+                            (tr("Arc"), "ARC"), (tr("Rect"), "RECT")):
             act = QAction(label, self.main_window)
             act.setCheckable(True)
             act.setChecked(self.draw_mode == mode)
@@ -127,7 +126,7 @@ class SketcherWorkbench(BaseWorkbench):
                 lambda checked, m=mode: self.set_draw_mode(m if checked else "SELECT"))
             toolbar.addAction(act)
 
-        constr_act = QAction("Construction", self.main_window)
+        constr_act = QAction(tr("Construction"), self.main_window)
         constr_act.setCheckable(True)
         constr_act.setChecked(self.construction_mode)
         constr_act.triggered.connect(self._toggle_construction)
@@ -135,26 +134,29 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        snap_act = QAction("Snap", self.main_window)
+        snap_act = QAction(tr("Snap"), self.main_window)
         snap_act.setCheckable(True)
         snap_act.setChecked(self.snap_on)
         snap_act.triggered.connect(lambda checked: setattr(self, "snap_on", checked))
         toolbar.addAction(snap_act)
-        toolbar.addWidget(QLabel(" Grid "))
-        toolbar.addWidget(self.grid_spin)
+        grid_spin = QSpinBox(minimum=1, maximum=100, value=self.grid_step)
+        grid_spin.setFixedWidth(52)
+        grid_spin.valueChanged.connect(lambda v: setattr(self, "grid_step", v))
+        toolbar.addWidget(QLabel(tr(" Grid ")))
+        toolbar.addWidget(grid_spin)
 
         toolbar.addSeparator()
 
         for label, handler in (
-            ("Coincident", self.add_coincident_constraint),
+            (tr("Coincident"), self.add_coincident_constraint),
             ("H", self.add_horizontal_constraint),
             ("V", self.add_vertical_constraint),
-            ("Parallel", self.add_parallel_constraint),
-            ("Perp", self.add_perpendicular_constraint),
-            ("Equal", self.add_equal_constraint),
-            ("Length", self.add_length_constraint),
-            ("Radius", self.add_radius_constraint),
-            ("Lock", self.add_lock_constraint),
+            (tr("Parallel"), self.add_parallel_constraint),
+            (tr("Perp"), self.add_perpendicular_constraint),
+            (tr("Equal"), self.add_equal_constraint),
+            (tr("Length"), self.add_length_constraint),
+            (tr("Radius"), self.add_radius_constraint),
+            (tr("Lock"), self.add_lock_constraint),
         ):
             act = QAction(label, self.main_window)
             act.triggered.connect(handler)
@@ -162,17 +164,27 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        solve_act = QAction("Solve", self.main_window)
+        solve_act = QAction(tr("Solve"), self.main_window)
         solve_act.triggered.connect(self.solve_sketch)
         toolbar.addAction(solve_act)
-        delete_act = QAction("Delete", self.main_window)
+        delete_act = QAction(tr("Delete"), self.main_window)
         delete_act.triggered.connect(self.delete_selected)
         toolbar.addAction(delete_act)
-        clear_act = QAction("Clear", self.main_window)
+        clear_act = QAction(tr("Clear"), self.main_window)
         clear_act.triggered.connect(self.clear_sketch)
         toolbar.addAction(clear_act)
 
+        self.dof_label = QLabel(self._dof_text)
         toolbar.addWidget(self.dof_label)
+
+    def retranslate(self):
+        """Hook called by MainWindow.retranslate() to refresh cached strings."""
+        has_geom = bool(self.lines or self.circles or self.arcs)
+        self._dof_text = (f" {tr('DOF:')} {self.dof} " if has_geom
+                          else f" {tr('DOF:')} — ")
+        label = getattr(self, "dof_label", None)
+        if label is not None:
+            label.setText(self._dof_text)
 
     def _toggle_construction(self, checked):
         self.construction_mode = checked
@@ -186,7 +198,7 @@ class SketcherWorkbench(BaseWorkbench):
     def cancel_temp(self):
         if self.temp_points:
             self.temp_points = []
-            self.main_window.log("In-progress geometry cancelled.")
+            self.main_window.log(tr("In-progress geometry cancelled."))
 
     # ------------------------------------------------------------------ snap
     def all_points(self):
@@ -241,7 +253,7 @@ class SketcherWorkbench(BaseWorkbench):
 
     def add_circle(self, center, radius, construction=None):
         if radius < 0.5:
-            self.main_window.log("Circle rejected: radius too small.")
+            self.main_window.log(tr("Circle rejected: radius too small."))
             return None
         circle = SketchCircle(
             center, radius,
@@ -257,7 +269,7 @@ class SketcherWorkbench(BaseWorkbench):
     def add_arc(self, p_start, mid_xy, p_end, construction=None):
         cc = circumcenter(p_start.x, p_start.y, mid_xy[0], mid_xy[1], p_end.x, p_end.y)
         if cc is None:
-            self.main_window.log("Arc rejected: the three points are collinear.")
+            self.main_window.log(tr("Arc rejected: the three points are collinear."))
             return None
         center = SketchPoint(*cc)
         radius = math.hypot(p_start.x - cc[0], p_start.y - cc[1])
@@ -278,14 +290,14 @@ class SketcherWorkbench(BaseWorkbench):
         x1, y1 = corner1
         x2, y2 = corner2
         if abs(x2 - x1) < 0.5 or abs(y2 - y1) < 0.5:
-            self.main_window.log("Rectangle rejected: degenerate shape.")
+            self.main_window.log(tr("Rectangle rejected: degenerate shape."))
             return None
         bl, br = SketchPoint(x1, y1), SketchPoint(x2, y1)
-        tr, tl = SketchPoint(x2, y2), SketchPoint(x1, y2)
+        tpr, tpl = SketchPoint(x2, y2), SketchPoint(x1, y2)
         bottom = self.add_line(bl, br, construction)
-        right = self.add_line(br, tr, construction)
-        top = self.add_line(tr, tl, construction)
-        left = self.add_line(tl, bl, construction)
+        right = self.add_line(br, tpr, construction)
+        top = self.add_line(tpr, tpl, construction)
+        left = self.add_line(tpl, bl, construction)
         for line, kind in ((bottom, "HORIZONTAL"), (top, "HORIZONTAL"),
                            (left, "VERTICAL"), (right, "VERTICAL")):
             self.constraints.append({"type": kind, "targets": [line]})
@@ -359,7 +371,7 @@ class SketcherWorkbench(BaseWorkbench):
             return sel[:n]
         if not sel and len(self.lines) >= n:
             return self.lines[-n:]
-        self.main_window.log(f"Select {n} line(s) first (or draw {n}).")
+        self.main_window.log(trt("Select {n} line(s) first (or draw {n}).", n=n))
         return None
 
     def add_horizontal_constraint(self):
@@ -404,7 +416,8 @@ class SketcherWorkbench(BaseWorkbench):
         line = lines[0]
         current = math.hypot(line.p2.x - line.p1.x, line.p2.y - line.p1.y)
         value, ok = QInputDialog.getDouble(
-            self.main_window, "Length Constraint", "Length (mm):", current, 0.01, 1e6, 2)
+            self.main_window, tr("Length Constraint"), tr("Length (mm):"),
+            current, 0.01, 1e6, 2)
         if not ok:
             return
         self.constraints.append({"type": "LENGTH", "targets": [line], "value": value})
@@ -421,7 +434,8 @@ class SketcherWorkbench(BaseWorkbench):
             return
         geom = sel[0]
         value, ok = QInputDialog.getDouble(
-            self.main_window, "Radius Constraint", "Radius (mm):", geom.radius, 0.01, 1e6, 2)
+            self.main_window, tr("Radius Constraint"), tr("Radius (mm):"),
+            geom.radius, 0.01, 1e6, 2)
         if not ok:
             return
         self.constraints.append({"type": "RADIUS", "targets": [geom], "value": value})
@@ -431,7 +445,7 @@ class SketcherWorkbench(BaseWorkbench):
     def add_lock_constraint(self):
         sel = self.selected_geometry() or (self.lines + self.circles + self.arcs)[-1:]
         if not sel:
-            self.main_window.log("Nothing to lock.")
+            self.main_window.log(tr("Nothing to lock."))
             return
         geom = sel[0]
         if isinstance(geom, SketchLine):
@@ -460,7 +474,7 @@ class SketcherWorkbench(BaseWorkbench):
         pa, pb = min(pairs, key=lambda pr: math.hypot(pr[0].x - pr[1].x,
                                                       pr[0].y - pr[1].y))
         if pa is pb:
-            self.main_window.log("Endpoints already coincident.")
+            self.main_window.log(tr("Endpoints already coincident."))
             return
         if l2.p1 is pb:
             l2.p1 = pa
@@ -477,16 +491,20 @@ class SketcherWorkbench(BaseWorkbench):
         self._restyle()
 
         if self.status == STATUS_FULL:
-            msg = "Fully constrained sketch"
+            msg = tr("Fully constrained sketch")
         elif self.status == STATUS_OVER:
-            msg = "Conflicting constraints - sketch could not be solved"
+            msg = tr("Conflicting constraints - sketch could not be solved")
         elif self.status == STATUS_UNDER:
-            msg = f"Under-constrained sketch with {self.dof} degrees of freedom"
+            msg = trt("Under-constrained sketch with {n} degrees of freedom",
+                      n=self.dof)
         else:
-            msg = "Empty sketch"
+            msg = tr("Empty sketch")
         if redundant and self.status != STATUS_OVER:
-            msg += " (redundant constraints detected)"
-        self.dof_label.setText(f" DOF: {self.dof} ")
+            msg += tr(" (redundant constraints detected)")
+        self._dof_text = f" {tr('DOF:')} {self.dof} "
+        label = getattr(self, "dof_label", None)
+        if label is not None:
+            label.setText(self._dof_text)
         self.main_window.log(f"Solver: {msg} (residual {residual:.2e})")
         self.update_dock_views(self.main_window.tree_list, self.main_window.property_table)
 
@@ -523,7 +541,7 @@ class SketcherWorkbench(BaseWorkbench):
                 self.scene.removeItem(item)
         self.constraints = [c for c in self.constraints
                             if all(id(t) not in dead for t in c["targets"])]
-        self.main_window.log(f"Deleted {len(geoms)} geometry element(s).")
+        self.main_window.log(trt("Deleted {n} geometry element(s).", n=len(geoms)))
         self.solve_sketch()
 
     def clear_sketch(self):
@@ -532,39 +550,40 @@ class SketcherWorkbench(BaseWorkbench):
             self.scene.removeItem(item)
         self.item_of_geom, self.geom_of_item = {}, {}
         self.temp_points = []
-        self.main_window.log("Sketch cleared.")
+        self.main_window.log(tr("Sketch cleared."))
         self.solve_sketch()
 
     # ------------------------------------------------------------------ dock / export
     def update_dock_views(self, tree_widget, property_table):
         tree_widget.clear()
         for idx, l in enumerate(self.lines, start=1):
-            tag = " (construction)" if l.is_construction else ""
+            tag = tr(" (construction)") if l.is_construction else ""
             tree_widget.addItem(
-                f"Line {idx}{tag} [({l.p1.x:.0f},{l.p1.y:.0f}) -> ({l.p2.x:.0f},{l.p2.y:.0f})]")
+                f"{tr('Line')} {idx}{tag} [({l.p1.x:.0f},{l.p1.y:.0f}) -> ({l.p2.x:.0f},{l.p2.y:.0f})]")
         for idx, c in enumerate(self.circles, start=1):
-            tag = " (construction)" if c.is_construction else ""
+            tag = tr(" (construction)") if c.is_construction else ""
             tree_widget.addItem(
-                f"Circle {idx}{tag} [C: ({c.center.x:.0f},{c.center.y:.0f}), R: {c.radius:.0f}]")
+                f"{tr('Circle')} {idx}{tag} [C: ({c.center.x:.0f},{c.center.y:.0f}), R: {c.radius:.0f}]")
         for idx, a in enumerate(self.arcs, start=1):
-            tag = " (construction)" if a.is_construction else ""
+            tag = tr(" (construction)") if a.is_construction else ""
             tree_widget.addItem(
-                f"Arc {idx}{tag} [C: ({a.center.x:.0f},{a.center.y:.0f}), R: {a.radius:.0f}]")
+                f"{tr('Arc')} {idx}{tag} [C: ({a.center.x:.0f},{a.center.y:.0f}), R: {a.radius:.0f}]")
 
         status_text = {
-            STATUS_FULL: "Fully constrained",
-            STATUS_OVER: "Over-constrained (redundant/conflicting)",
-            STATUS_UNDER: "Under-constrained",
-            STATUS_EMPTY: "Empty sketch",
+            STATUS_FULL: tr("Fully constrained"),
+            STATUS_OVER: tr("Over-constrained (redundant/conflicting)"),
+            STATUS_UNDER: tr("Under-constrained"),
+            STATUS_EMPTY: tr("Empty sketch"),
         }[self.status]
         rows = [
-            ("Solver Status", status_text),
-            ("Degrees of Freedom", str(self.dof)),
-            ("Lines / Circles / Arcs",
+            (tr("Solver Status"), status_text),
+            (tr("Degrees of Freedom"), str(self.dof)),
+            (tr("Lines / Circles / Arcs"),
              f"{len(self.lines)} / {len(self.circles)} / {len(self.arcs)}"),
-            ("Active Constraints", str(len(self.constraints))),
-            ("Snap", f"{'ON' if self.snap_on else 'OFF'} (grid {self.grid_step})"),
-            ("Solver Engine", "SciPy least-squares" if HAS_SCIPY else "DOF fallback (no SciPy)"),
+            (tr("Active Constraints"), str(len(self.constraints))),
+            (tr("Snap"), f"{'ON' if self.snap_on else 'OFF'} (grid {self.grid_step})"),
+            (tr("Solver Engine"),
+             tr("SciPy least-squares") if HAS_SCIPY else tr("DOF fallback (no SciPy)")),
         ]
         property_table.setRowCount(len(rows))
         for i, (key, value) in enumerate(rows):
@@ -573,7 +592,7 @@ class SketcherWorkbench(BaseWorkbench):
 
     def export_data(self):
         file_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, "Export Sketch JSON", "", "JSON Files (*.json)")
+            self.main_window, tr("Export Sketch JSON"), "", tr("JSON Files (*.json)"))
         if not file_path:
             return
         data = {
@@ -605,10 +624,11 @@ class SketcherWorkbench(BaseWorkbench):
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
         except OSError as e:
-            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write file:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Could not write file:") + f"\n{e}")
             return
         QMessageBox.information(
-            self.main_window, "Exported",
+            self.main_window, tr("Exported"),
             f"Exported {len(self.lines)} lines, {len(self.circles)} circles, "
             f"{len(self.arcs)} arcs, {len(self.constraints)} constraints."
         )

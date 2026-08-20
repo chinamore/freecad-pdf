@@ -27,6 +27,7 @@ try:
 except ImportError:  # PyMuPDF >= 1.26 prefers the new module name
     import pymupdf as fitz
 
+from utils.i18n import tr
 from workbenches.base_workbench import BaseWorkbench
 from workbenches.pdf_annotator.models import Bubble
 
@@ -158,10 +159,15 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.history = []           # JSON snapshots for undo
         self.future = []
 
-        # Style defaults (mirrored by the toolbar widgets)
+        # Toolbar-editable balloon style defaults. Widgets are rebuilt on
+        # every workbench switch; the values live here, not in the widgets
+        # (reusing QWidgets across QToolBar.clear() leaves them hidden and
+        # disabled, making them unclickable)
         self.def_outer = "#ef3340"
         self.def_fill = "#ffffff"
         self.def_font_color = "#ef3340"
+        self.def_transparent = True
+        self.ui_state = {"seq": 1, "size": 28, "border": 2, "font": 13}
 
         # Scene / view
         self.scene = QGraphicsScene()
@@ -178,9 +184,10 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         bar.setStyleSheet("background:#26364d; color:#fff;")
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(10, 4, 10, 4)
-        self.file_info_label = QLabel("No drawing opened")
+        self.file_info_label = QLabel(tr("No drawing opened"))
         self.file_info_label.setStyleSheet("color:#fff;")
-        self.tool_coord_label = QLabel("Tool: <b>Select</b> | Coords: —")
+        self.tool_coord_label = QLabel(
+            tr("Tool:") + f" <b>{tr('Select')}</b> | " + tr("Coords:") + " —")
         self.tool_coord_label.setStyleSheet("color:#fff;")
         bar_layout.addWidget(self.file_info_label)
         bar_layout.addStretch(1)
@@ -188,31 +195,8 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         layout.addWidget(bar)
         layout.addWidget(self.view, 1)
 
-        self._build_toolbar_widgets()
-
     # ------------------------------------------------------------------ UI
-    def _build_toolbar_widgets(self):
-        """Persistent toolbar widgets (re-added on every workbench switch)."""
-        self.seq_spin = QSpinBox(minimum=1, maximum=9999, value=1)
-        self.seq_spin.setFixedWidth(64)
-        self.size_spin = QSpinBox(minimum=10, maximum=120, value=28)
-        self.size_spin.setFixedWidth(58)
-        self.border_spin = QSpinBox(minimum=1, maximum=15, value=2)
-        self.border_spin.setFixedWidth(52)
-        self.font_spin = QSpinBox(minimum=6, maximum=60, value=13)
-        self.font_spin.setFixedWidth(52)
-
-        self.outer_btn = self._make_color_button("def_outer")
-        self.fill_btn = self._make_color_button("def_fill")
-        self.font_color_btn = self._make_color_button("def_font_color")
-        self.transparent_chk = QCheckBox("Transparent")
-        self.transparent_chk.setChecked(True)
-
-        self.page_label = QLabel("0 / 0")
-        self.zoom_label = QLabel("100%")
-        self.zoom_label.setMinimumWidth(44)
-
-    def _make_color_button(self, attr):
+    def _color_button(self, attr):
         btn = QPushButton()
         btn.setFixedSize(30, 24)
         btn.setStyleSheet(f"background-color: {getattr(self, attr)}; border:1px solid #888;")
@@ -229,45 +213,67 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         return self.container
 
     def setup_toolbar(self, toolbar):
-        open_act = QAction("Open PDF", self.main_window)
+        open_act = QAction(tr("Open PDF"), self.main_window)
         open_act.triggered.connect(self.main_window.open_pdf)
         toolbar.addAction(open_act)
 
-        export_pdf_act = QAction("Export PDF", self.main_window)
+        export_pdf_act = QAction(tr("Export PDF"), self.main_window)
         export_pdf_act.triggered.connect(self.export_pdf)
         toolbar.addAction(export_pdf_act)
 
-        png_act = QAction("Export PNG", self.main_window)
+        png_act = QAction(tr("Export PNG"), self.main_window)
         png_act.triggered.connect(self.export_png)
         toolbar.addAction(png_act)
 
-        batch_act = QAction("Batch PNG", self.main_window)
+        batch_act = QAction(tr("Batch PNG"), self.main_window)
         batch_act.triggered.connect(self.export_png_batch)
         toolbar.addAction(batch_act)
 
-        print_act = QAction("Print", self.main_window)
+        print_act = QAction(tr("Print"), self.main_window)
         print_act.triggered.connect(self.print_page)
         toolbar.addAction(print_act)
 
         toolbar.addSeparator()
 
-        add_act = QAction("Add Bubble", self.main_window)
+        add_act = QAction(tr("Add Bubble"), self.main_window)
         add_act.setCheckable(True)
         add_act.setChecked(self.add_mode)
         add_act.triggered.connect(self.toggle_add_mode)
         toolbar.addAction(add_act)
 
+        # Widgets are rebuilt on every switch; values live in ui_state
+        def spin(key, lo, hi, w):
+            s = QSpinBox(minimum=lo, maximum=hi, value=self.ui_state[key])
+            s.setFixedWidth(w)
+            s.valueChanged.connect(lambda v, k=key: self.ui_state.update({k: v}))
+            return s
+
+        self.seq_spin = spin("seq", 1, 9999, 64)
+        size_spin = spin("size", 10, 120, 58)
+        border_spin = spin("border", 1, 15, 52)
+        font_spin = spin("font", 6, 60, 52)
+        transparent_chk = QCheckBox(tr("Transparent"))
+        transparent_chk.setChecked(self.def_transparent)
+        transparent_chk.toggled.connect(lambda v: setattr(self, "def_transparent", v))
+
         for text, widget in (
-            ("Seq", self.seq_spin), ("Size", self.size_spin),
-            ("Border", self.border_spin), ("Font", self.font_spin),
-            ("Outer", self.outer_btn), ("Fill", self.fill_btn),
-            (None, self.transparent_chk), ("Text", self.font_color_btn),
+            (tr("Seq"), self.seq_spin), (tr("Size"), size_spin),
+            (tr("Border"), border_spin), (tr("Font"), font_spin),
+            (tr("Outer"), self._color_button("def_outer")),
+            (tr("Fill"), self._color_button("def_fill")),
+            (None, transparent_chk), (tr("Text"), self._color_button("def_font_color")),
         ):
             if text:
                 toolbar.addWidget(QLabel(f" {text} "))
             toolbar.addWidget(widget)
 
         toolbar.addSeparator()
+
+        page_text = (f" {self.page_no} / {self.doc.page_count} " if self.doc else " 0 / 0 ")
+        self.page_label = QLabel(page_text)
+        zoom_text = f"{round(self.zoom / BASE_SCALE * 100)}%"
+        self.zoom_label = QLabel(zoom_text)
+        self.zoom_label.setMinimumWidth(44)
 
         prev_act = QAction("◀", self.main_window)
         prev_act.triggered.connect(lambda: self.go_page(self.page_no - 1))
@@ -284,22 +290,22 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         zoom_in_act = QAction("＋", self.main_window)
         zoom_in_act.triggered.connect(lambda: self.zoom_step(1))
         toolbar.addAction(zoom_in_act)
-        fit_act = QAction("Fit", self.main_window)
+        fit_act = QAction(tr("Fit"), self.main_window)
         fit_act.triggered.connect(self.zoom_fit)
         toolbar.addAction(fit_act)
 
         toolbar.addSeparator()
 
-        undo_act = QAction("Undo", self.main_window)
+        undo_act = QAction(tr("Undo"), self.main_window)
         undo_act.triggered.connect(self.undo)
         toolbar.addAction(undo_act)
-        redo_act = QAction("Redo", self.main_window)
+        redo_act = QAction(tr("Redo"), self.main_window)
         redo_act.triggered.connect(self.redo)
         toolbar.addAction(redo_act)
-        clear_act = QAction("Clear", self.main_window)
+        clear_act = QAction(tr("Clear"), self.main_window)
         clear_act.triggered.connect(self.clear_balloons)
         toolbar.addAction(clear_act)
-        renumber_act = QAction("Renumber", self.main_window)
+        renumber_act = QAction(tr("Renumber"), self.main_window)
         renumber_act.triggered.connect(self.renumber_balloons)
         toolbar.addAction(renumber_act)
 
@@ -308,7 +314,8 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         try:
             doc = fitz.open(file_path)
         except Exception as e:
-            QMessageBox.critical(self.main_window, "Open Failed", f"Could not open PDF:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Open Failed"),
+                                 tr("Could not open PDF:") + f"\n{e}")
             return
         self.doc = doc
         self.pdf_path = file_path
@@ -318,7 +325,8 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.selected_id = None
         self.history = []
         self.future = []
-        self.seq_spin.setValue(1)
+        self.ui_state["seq"] = 1
+        self._sync_seq_spin()
         self.render_page()
         self.main_window.log(f"Loaded PDF: {file_path} ({doc.page_count} pages)")
 
@@ -341,7 +349,8 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
                 self._add_item(b)
 
         name = os.path.basename(self.pdf_path)
-        self.file_info_label.setText(f"{name} · Page {self.page_no}/{self.doc.page_count}")
+        self.file_info_label.setText(
+            f"{name} · {tr('Page')} {self.page_no}/{self.doc.page_count}")
         self.page_label.setText(f" {self.page_no} / {self.doc.page_count} ")
         self.zoom_label.setText(f"{round(self.zoom / BASE_SCALE * 100)}%")
         self.update_dock_views(self.main_window.tree_list, self.main_window.property_table)
@@ -380,23 +389,41 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.main_window.log(f"Balloon placement mode: {checked}")
         self._update_tool_coord(None)
 
+    def retranslate(self):
+        """Hook called by MainWindow.retranslate() to refresh the info bar."""
+        if not self.doc:
+            self.file_info_label.setText(tr("No drawing opened"))
+        else:
+            name = os.path.basename(self.pdf_path)
+            self.file_info_label.setText(
+                f"{name} · {tr('Page')} {self.page_no}/{self.doc.page_count}")
+        self._update_tool_coord(None)
+
     def _update_tool_coord(self, pos):
-        tool = "Bubble" if self.add_mode else "Select"
+        tool = tr("Bubble") if self.add_mode else tr("Select")
         if pos is not None and self.doc:
             coord = f"{pos.x() / self.zoom:.1f}, {pos.y() / self.zoom:.1f}"
         else:
             coord = "—"
-        self.tool_coord_label.setText(f"Tool: <b>{tool}</b> | Coords: {coord}")
+        self.tool_coord_label.setText(
+            tr("Tool:") + f" <b>{tool}</b> | " + tr("Coords:") + f" {coord}")
 
     def on_mouse_moved(self, pos):
         self._update_tool_coord(pos)
 
+    def _sync_seq_spin(self):
+        spin = getattr(self, "seq_spin", None)
+        if spin is not None:
+            spin.blockSignals(True)
+            spin.setValue(self.ui_state["seq"])
+            spin.blockSignals(False)
+
     def make_bubble(self, nx, ny):
         return Bubble(
-            page=self.page_no, nx=nx, ny=ny, text=str(self.seq_spin.value()),
-            size=self.size_spin.value(), border=self.border_spin.value(),
-            font=self.font_spin.value(), outer_color=self.def_outer,
-            fill_color="transparent" if self.transparent_chk.isChecked() else self.def_fill,
+            page=self.page_no, nx=nx, ny=ny, text=str(self.ui_state["seq"]),
+            size=self.ui_state["size"], border=self.ui_state["border"],
+            font=self.ui_state["font"], outer_color=self.def_outer,
+            fill_color="transparent" if self.def_transparent else self.def_fill,
             font_color=self.def_font_color,
         )
 
@@ -411,7 +438,8 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         bubble = self.make_bubble(pos.x() / self.page_w, pos.y() / self.page_h)
         self.bubbles.append(bubble)
         self._add_item(bubble)
-        self.seq_spin.setValue(self.seq_spin.value() + 1)
+        self.ui_state["seq"] += 1
+        self._sync_seq_spin()
         self.main_window.log(
             f"Added Balloon #{bubble.text} on page {bubble.page} "
             f"at ({bubble.nx * 100:.1f}%, {bubble.ny * 100:.1f}%)"
@@ -434,7 +462,7 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             self.scene.removeItem(item)
         if self.selected_id == bubble_id:
             self.selected_id = None
-        self.main_window.log("Removed balloon.")
+        self.main_window.log(tr("Removed balloon."))
         self.update_dock_views(self.main_window.tree_list, self.main_window.property_table)
 
     def remove_selected(self):
@@ -452,9 +480,10 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         self.snapshot()
         self.bubbles = []
         self.selected_id = None
-        self.seq_spin.setValue(1)
+        self.ui_state["seq"] = 1
+        self._sync_seq_spin()
         self.render_page()
-        self.main_window.log("Cleared all balloons.")
+        self.main_window.log(tr("Cleared all balloons."))
 
     def renumber_balloons(self):
         if not self.bubbles:
@@ -464,9 +493,10 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         for b in self.bubbles:
             counters[b.page] = counters.get(b.page, 0) + 1
             b.text = str(counters[b.page])
-        self.seq_spin.setValue(counters.get(self.page_no, 0) + 1)
+        self.ui_state["seq"] = counters.get(self.page_no, 0) + 1
+        self._sync_seq_spin()
         self.render_page()
-        self.main_window.log("Auto-renumbered balloons sequentially per page.")
+        self.main_window.log(tr("Auto-renumbered balloons sequentially per page."))
 
     # ------------------------------------------------------- undo / redo
     def snapshot(self):
@@ -485,19 +515,20 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             return
         self.future.append(json.dumps([b.to_dict() for b in self.bubbles]))
         self._restore(self.history.pop())
-        self.main_window.log("Undo.")
+        self.main_window.log(tr("Undo."))
 
     def redo(self):
         if not self.future:
             return
         self.history.append(json.dumps([b.to_dict() for b in self.bubbles]))
         self._restore(self.future.pop())
-        self.main_window.log("Redo.")
+        self.main_window.log(tr("Redo."))
 
     # ------------------------------------------------------- export
     def _require_doc(self):
         if not self.doc:
-            QMessageBox.warning(self.main_window, "No PDF", "Please open a PDF drawing first.")
+            QMessageBox.warning(self.main_window, tr("No PDF"),
+                                tr("Please open a PDF drawing first."))
             return False
         return True
 
@@ -507,7 +538,7 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             return
         default = os.path.splitext(self.pdf_path)[0] + " - Annotated.pdf"
         out_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, "Export Annotated PDF", default, "PDF Files (*.pdf)")
+            self.main_window, tr("Export Annotated PDF"), default, tr("PDF Files (*.pdf)"))
         if not out_path:
             return
         try:
@@ -529,10 +560,11 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             doc.save(out_path)
             doc.close()
         except Exception as e:
-            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write PDF:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Could not write PDF:") + f"\n{e}")
             return
         self.main_window.log(f"Exported annotated PDF: {out_path}")
-        QMessageBox.information(self.main_window, "Success",
+        QMessageBox.information(self.main_window, tr("Success"),
                                 f"Exported {len(self.bubbles)} balloons to:\n{out_path}")
 
     def _draw_badge(self, painter, b, img_w, img_h, render_scale):
@@ -575,21 +607,23 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             return
         stem = os.path.splitext(os.path.basename(self.pdf_path))[0]
         out_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, "Export Current Page PNG",
-            f"{stem}-page-{self.page_no}.png", "PNG Files (*.png)")
+            self.main_window, tr("Export Current Page PNG"),
+            f"{stem}-page-{self.page_no}.png", tr("PNG Files (*.png)"))
         if not out_path:
             return
         try:
             self._render_page_image(self.page_no, 3).save(out_path, "PNG")
         except Exception as e:
-            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write PNG:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Could not write PNG:") + f"\n{e}")
             return
         self.main_window.log(f"Exported PNG: {out_path}")
 
     def export_png_batch(self):
         if not self._require_doc():
             return
-        out_dir = QFileDialog.getExistingDirectory(self.main_window, "Choose PNG Output Folder")
+        out_dir = QFileDialog.getExistingDirectory(
+            self.main_window, tr("Choose PNG Output Folder"))
         if not out_dir:
             return
         stem = os.path.splitext(os.path.basename(self.pdf_path))[0]
@@ -598,10 +632,11 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
                 self._render_page_image(n, 3).save(
                     os.path.join(out_dir, f"{stem}-page-{n}.png"), "PNG")
         except Exception as e:
-            QMessageBox.critical(self.main_window, "Export Failed", f"Batch PNG failed:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Batch PNG failed:") + f"\n{e}")
             return
         self.main_window.log(f"Batch exported {self.doc.page_count} pages to {out_dir}")
-        QMessageBox.information(self.main_window, "Success",
+        QMessageBox.information(self.main_window, tr("Success"),
                                 f"Exported {self.doc.page_count} pages to:\n{out_dir}")
 
     def print_page(self):
@@ -620,12 +655,12 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         painter.drawImage(int(rect.x() + (rect.width() - scaled.width()) / 2),
                           int(rect.y() + (rect.height() - scaled.height()) / 2), scaled)
         painter.end()
-        self.main_window.log("Sent current page to printer.")
+        self.main_window.log(tr("Sent current page to printer."))
 
     def export_data(self):
         """JSON export of all balloons (File menu / Ctrl+E)."""
         file_path, _ = QFileDialog.getSaveFileName(
-            self.main_window, "Export Balloons JSON", "", "JSON Files (*.json)")
+            self.main_window, tr("Export Balloons JSON"), "", tr("JSON Files (*.json)"))
         if not file_path:
             return
         data = {
@@ -637,9 +672,10 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
         except OSError as e:
-            QMessageBox.critical(self.main_window, "Export Failed", f"Could not write file:\n{e}")
+            QMessageBox.critical(self.main_window, tr("Export Failed"),
+                                 tr("Could not write file:") + f"\n{e}")
             return
-        QMessageBox.information(self.main_window, "Success",
+        QMessageBox.information(self.main_window, tr("Success"),
                                 f"Exported {len(self.bubbles)} balloons to JSON!")
 
     # ------------------------------------------------------- dock views
@@ -648,23 +684,24 @@ class PDFAnnotatorWorkbench(BaseWorkbench):
         for b in self.bubbles:
             if b.page == self.page_no:
                 tree_widget.addItem(
-                    f"Balloon {b.text} - ({b.nx * 100:.1f}%, {b.ny * 100:.1f}%)")
+                    f"{tr('Balloon')} {b.text} - ({b.nx * 100:.1f}%, {b.ny * 100:.1f}%)")
         self._update_property_table(property_table)
 
     def _update_property_table(self, property_table):
         rows = [
-            ("PDF File", os.path.basename(self.pdf_path) if self.pdf_path else "—"),
-            ("Page", f"{self.page_no} / {self.doc.page_count}" if self.doc else "—"),
-            ("Balloons (Total)", str(len(self.bubbles))),
-            ("Balloons (This Page)", str(sum(1 for b in self.bubbles if b.page == self.page_no))),
-            ("Inspection Standard", "ISO 2859-1 / FAI"),
+            (tr("PDF File"), os.path.basename(self.pdf_path) if self.pdf_path else "—"),
+            (tr("Page"), f"{self.page_no} / {self.doc.page_count}" if self.doc else "—"),
+            (tr("Balloons (Total)"), str(len(self.bubbles))),
+            (tr("Balloons (This Page)"),
+             str(sum(1 for b in self.bubbles if b.page == self.page_no))),
+            (tr("Inspection Standard"), "ISO 2859-1 / FAI"),
         ]
         selected = next((b for b in self.bubbles if b.id == self.selected_id), None)
         if selected:
             rows += [
-                ("Selected Balloon", selected.text),
-                ("Position", f"({selected.nx * 100:.1f}%, {selected.ny * 100:.1f}%)"),
-                ("Size / Border / Font",
+                (tr("Selected Balloon"), selected.text),
+                (tr("Position"), f"({selected.nx * 100:.1f}%, {selected.ny * 100:.1f}%)"),
+                (tr("Size / Border / Font"),
                  f"{selected.size} / {selected.border} / {selected.font} px"),
             ]
         property_table.setRowCount(len(rows))
