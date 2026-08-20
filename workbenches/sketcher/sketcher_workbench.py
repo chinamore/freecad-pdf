@@ -338,6 +338,14 @@ class SketcherView(QGraphicsView):
         if not self.wb.on_key(event):
             super().keyPressEvent(event)
 
+    def wheelEvent(self, event):
+        """FreeCAD-style wheel zoom (needed after large CAD imports)."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+            self.scale(factor, factor)
+            return
+        super().wheelEvent(event)
+
 
 class SketcherWorkbench(BaseWorkbench):
     # mode -> (clicks needed, label key, shortcut shown in tooltip)
@@ -2602,13 +2610,15 @@ class SketcherWorkbench(BaseWorkbench):
         # unconstrained multi-thousand-variable system is wasted work
         if imported > 200:
             self.dof = 0
-            self._restyle()
-            self._rebuild_vertices()
             self._update_dof_label()
+            # do NOT rebuild vertex handles for thousands of endpoints (that
+            # would add ~10k scene items and freeze the view); restyle only
+            self._restyle()
         else:
             self.solve_sketch()
         self.view.fitInView(self.scene.itemsBoundingRect().adjusted(-40, -40, 40, 40),
                             Qt.AspectRatioMode.KeepAspectRatio)
+        self.scene.update()
 
     @staticmethod
     def _parse_dxf_entities(text):
