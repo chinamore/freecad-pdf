@@ -28,6 +28,20 @@ STATUS_OVER = "over"
 _SOLVE_TOL = 1e-6
 
 
+def _numeric_jacobian(f, x, eps=1e-7):
+    """Central-difference Jacobian of a residual vector function."""
+    x = np.asarray(x, dtype=float)
+    f0 = f(x)
+    jac = np.empty((f0.size, x.size))
+    for j in range(x.size):
+        h = eps * max(1.0, abs(x[j]))
+        xp, xm = x.copy(), x.copy()
+        xp[j] += h
+        xm[j] -= h
+        jac[:, j] = (f(xp) - f(xm)) / (2 * h)
+    return jac
+
+
 class SketchSolver:
     def solve(self, lines, circles, arcs, constraints):
         """
@@ -154,14 +168,19 @@ class SketchSolver:
 
         # --- solve -------------------------------------------------------
         if HAS_SCIPY and (n_user + n_internal) > 0:
+            # NOTE: tr_solver="exact" (the trf default) mishandles
+            # underdetermined systems (fewer residuals than variables) and
+            # can stop far from the solution; lsmr converges correctly.
             result = least_squares(lambda v: np.asarray(all_residuals(v), dtype=float),
-                                   x0, method="trf")
+                                   x0, method="trf", tr_solver="lsmr")
             solved = result.x
             residual = float(np.sum(result.fun ** 2))
             # DOF and redundancy come from the Jacobian rank at the solution:
             # dependent constraints (e.g. translation-invariant systems) must
             # not consume DOF, and every equation beyond the rank is redundant.
-            jac = np.asarray(result.jac, dtype=float)
+            # result.jac is None with lsmr, so recompute numerically.
+            jac = _numeric_jacobian(
+                lambda v: np.asarray(all_residuals(v), dtype=float), solved)
             sv = np.linalg.svd(jac, compute_uv=False) if jac.size else np.zeros(0)
             rank = int((sv > sv[0] * 1e-6).sum()) if sv.size else 0
             dof = max(0, nvars - rank)

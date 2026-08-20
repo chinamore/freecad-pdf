@@ -42,7 +42,7 @@ def circumcenter(ax, ay, bx, by, cx, cy):
 
 
 class SketcherView(QGraphicsView):
-    """Canvas view delegating clicks / keys to the workbench state machine."""
+    """Canvas view delegating clicks / drags / keys to the workbench."""
 
     def __init__(self, workbench):
         super().__init__(workbench.scene)
@@ -51,17 +51,25 @@ class SketcherView(QGraphicsView):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        if not self.wb.on_mouse_press(event.button(), self.mapToScene(event.pos())):
+        pos = self.mapToScene(event.pos())
+        if self.wb.start_drag(event.button(), pos):
+            return  # dragging existing geometry: consume, no rubber band
+        if not self.wb.on_mouse_press(event.button(), pos):
             super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if self.wb.update_drag(self.mapToScene(event.pos())):
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.wb.end_drag(event.button()):
+            return
+        super().mouseReleaseEvent(event)
+
     def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.wb.delete_selected()
-            return
-        if event.key() == Qt.Key.Key_Escape:
-            self.wb.cancel_temp()
-            return
-        super().keyPressEvent(event)
+        if not self.wb.on_key(event):
+            super().keyPressEvent(event)
 
 
 class SketcherWorkbench(BaseWorkbench):
@@ -96,6 +104,11 @@ class SketcherWorkbench(BaseWorkbench):
         self.dof = 0
         self.status = STATUS_EMPTY
 
+        # Interaction state
+        self._drag = None            # {"points": [...], "last": QPointF}
+        self._key_prefix = ""        # "G" arms FreeCAD-style create-tool keys
+        self._constr_action = None   # toolbar action kept for D-key sync
+
         self._draw_grid()
 
         # Toolbar label state (the QLabel itself is rebuilt on every
@@ -117,11 +130,14 @@ class SketcherWorkbench(BaseWorkbench):
         return self.view
 
     def setup_toolbar(self, toolbar):
-        for label, mode in ((tr("Line"), "LINE"), (tr("Circle"), "CIRCLE"),
-                            (tr("Arc"), "ARC"), (tr("Rect"), "RECT")):
+        for label, mode, sc in ((tr("Line"), "LINE", "G, L"),
+                                (tr("Circle"), "CIRCLE", "G, C"),
+                                (tr("Arc"), "ARC", "G, A"),
+                                (tr("Rect"), "RECT", "G, R")):
             act = QAction(label, self.main_window)
             act.setCheckable(True)
             act.setChecked(self.draw_mode == mode)
+            act.setToolTip(f"{label} ({sc})")
             act.triggered.connect(
                 lambda checked, m=mode: self.set_draw_mode(m if checked else "SELECT"))
             toolbar.addAction(act)
@@ -129,8 +145,10 @@ class SketcherWorkbench(BaseWorkbench):
         constr_act = QAction(tr("Construction"), self.main_window)
         constr_act.setCheckable(True)
         constr_act.setChecked(self.construction_mode)
+        constr_act.setToolTip(f"{tr('Construction')} (D)")
         constr_act.triggered.connect(self._toggle_construction)
         toolbar.addAction(constr_act)
+        self._constr_action = constr_act
 
         toolbar.addSeparator()
 
@@ -147,27 +165,31 @@ class SketcherWorkbench(BaseWorkbench):
 
         toolbar.addSeparator()
 
-        for label, handler in (
-            (tr("Coincident"), self.add_coincident_constraint),
-            ("H", self.add_horizontal_constraint),
-            ("V", self.add_vertical_constraint),
-            (tr("Parallel"), self.add_parallel_constraint),
-            (tr("Perp"), self.add_perpendicular_constraint),
-            (tr("Equal"), self.add_equal_constraint),
-            (tr("Length"), self.add_length_constraint),
-            (tr("Radius"), self.add_radius_constraint),
-            (tr("Lock"), self.add_lock_constraint),
+        for label, sc, handler in (
+            (tr("Coincident"), "C", self.add_coincident_constraint),
+            ("H", "H", self.add_horizontal_constraint),
+            ("V", "V", self.add_vertical_constraint),
+            (tr("Parallel"), "P", self.add_parallel_constraint),
+            (tr("Perp"), "N", self.add_perpendicular_constraint),
+            (tr("Equal"), "E", self.add_equal_constraint),
+            (tr("Length"), "", self.add_length_constraint),
+            (tr("Radius"), "", self.add_radius_constraint),
+            (tr("Lock"), "K", self.add_lock_constraint),
         ):
             act = QAction(label, self.main_window)
+            if sc:
+                act.setToolTip(f"{label} ({sc})")
             act.triggered.connect(handler)
             toolbar.addAction(act)
 
         toolbar.addSeparator()
 
         solve_act = QAction(tr("Solve"), self.main_window)
+        solve_act.setToolTip(f"{tr('Solve')} (S)")
         solve_act.triggered.connect(self.solve_sketch)
         toolbar.addAction(solve_act)
         delete_act = QAction(tr("Delete"), self.main_window)
+        delete_act.setToolTip(f"{tr('Delete')} (Del)")
         delete_act.triggered.connect(self.delete_selected)
         toolbar.addAction(delete_act)
         clear_act = QAction(tr("Clear"), self.main_window)
@@ -188,6 +210,12 @@ class SketcherWorkbench(BaseWorkbench):
 
     def _toggle_construction(self, checked):
         self.construction_mode = checked
+        act = self._constr_action
+        if act is not None:
+            try:
+                act.setChecked(bool(checked))
+            except RuntimeError:
+                self._constr_action = None  # toolbar was rebuilt
         self.main_window.log(f"Construction geometry mode: {checked}")
 
     def set_draw_mode(self, mode):
@@ -199,6 +227,136 @@ class SketcherWorkbench(BaseWorkbench):
         if self.temp_points:
             self.temp_points = []
             self.main_window.log(tr("In-progress geometry cancelled."))
+
+    # ------------------------------------------------------------------ dragging
+    def _geom_points(self, geom):
+        if isinstance(geom, SketchLine):
+            return (geom.p1, geom.p2)
+        if isinstance(geom, SketchCircle):
+            return (geom.center,)
+        return (geom.center, geom.p1, geom.p2)
+
+    def _geom_dist(self, geom, pos):
+        """Distance from scene point to the geometry's curve (for picking)."""
+        px, py = pos.x(), pos.y()
+        if isinstance(geom, SketchLine):
+            ax, ay, bx, by = geom.p1.x, geom.p1.y, geom.p2.x, geom.p2.y
+            dx, dy = bx - ax, by - ay
+            l2 = dx * dx + dy * dy
+            t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / l2))
+            return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+        # circle / arc: distance to the circumference (span ignored for picking)
+        return abs(math.hypot(px - geom.center.x, py - geom.center.y) - geom.radius)
+
+    def _find_geom_at(self, pos, tol=None):
+        tol = max(4.0, float(self.snap_px)) if tol is None else tol
+        best, best_d = None, tol
+        for geom in self.lines + self.circles + self.arcs:
+            d = self._geom_dist(geom, pos)
+            if d < best_d:
+                best, best_d = geom, d
+        return best
+
+    def start_drag(self, button, pos):
+        """FreeCAD-style: grab a single endpoint near the cursor, otherwise
+        translate the whole geometry. Only in SELECT mode."""
+        if (button != Qt.MouseButton.LeftButton or self.draw_mode != "SELECT"
+                or self.temp_points):
+            return False
+        # Endpoint grab first (nearest endpoint of any geometry, so a shared
+        # corner moves the geometry unambiguously)
+        grab, best_d = None, float(self.snap_px)
+        for p in self.all_points():
+            d = math.hypot(p.x - pos.x(), p.y - pos.y())
+            if d < best_d:
+                grab, best_d = p, d
+        if grab is not None:
+            points = [grab]
+        else:
+            geom = self._find_geom_at(pos)
+            if geom is None:
+                return False
+            points, seen = [], set()
+            for p in self._geom_points(geom):  # dedup by id (unhashable dataclass)
+                if p.id not in seen:
+                    seen.add(p.id)
+                    points.append(p)
+        self._drag = {"points": points, "last": QPointF(pos)}
+        return True
+
+    def update_drag(self, pos):
+        if self._drag is None:
+            return False
+        last = self._drag["last"]
+        dx, dy = pos.x() - last.x(), pos.y() - last.y()
+        if dx == 0 and dy == 0:
+            return True
+        self._drag["last"] = QPointF(pos)
+        moved = set()
+        for p in self._drag["points"]:
+            p.x += dx
+            p.y += dy
+            moved.add(p.id)
+        for geom in self.lines + self.circles + self.arcs:
+            if any(pt.id in moved for pt in self._geom_points(geom)):
+                self.update_item(geom)
+        return True
+
+    def end_drag(self, button):
+        if self._drag is None or button != Qt.MouseButton.LeftButton:
+            return False
+        self._drag = None
+        self.solve_sketch()  # re-impose constraints after the move
+        return True
+
+    # ------------------------------------------------------------------ shortcuts
+    _CREATE_KEYS = {"L": "LINE", "C": "CIRCLE", "A": "ARC", "R": "RECT"}
+
+    def on_key(self, event):
+        """FreeCAD-style shortcuts. G + letter creates geometry; plain
+        letters apply constraints; Esc cancels; Del deletes."""
+        key = event.key()
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self.delete_selected()
+            self._key_prefix = ""
+            return True
+        if key == Qt.Key.Key_Escape:
+            if self.temp_points:
+                self.cancel_temp()
+            elif self.draw_mode != "SELECT":
+                self.set_draw_mode("SELECT")
+            self._key_prefix = ""
+            return True
+        text = event.text().upper()
+        if not text:
+            return False
+        if self._key_prefix == "G":
+            self._key_prefix = ""
+            mode = self._CREATE_KEYS.get(text)
+            if mode:
+                self.set_draw_mode(mode)
+            return True
+        if text == "G":
+            self._key_prefix = "G"
+            return True
+        direct = {
+            "C": self.add_coincident_constraint,
+            "H": self.add_horizontal_constraint,
+            "V": self.add_vertical_constraint,
+            "P": self.add_parallel_constraint,
+            "N": self.add_perpendicular_constraint,
+            "E": self.add_equal_constraint,
+            "K": self.add_lock_constraint,
+            "S": self.solve_sketch,
+        }
+        if text == "D":
+            self._toggle_construction(not self.construction_mode)
+            return True
+        handler = direct.get(text)
+        if handler:
+            handler()
+            return True
+        return False
 
     # ------------------------------------------------------------------ snap
     def all_points(self):
