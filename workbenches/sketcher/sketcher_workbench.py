@@ -309,6 +309,10 @@ class SketcherView(QGraphicsView):
 
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
+        if event.button() == Qt.MouseButton.LeftButton and \
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if self.wb.ctrl_click(pos):
+                return  # ctrl+click multi-select handled
         if self.wb.start_drag(event.button(), pos):
             return  # dragging existing geometry: consume, no rubber band
         if not self.wb.on_mouse_press(event.button(), pos):
@@ -414,6 +418,7 @@ class SketcherWorkbench(BaseWorkbench):
         self._drag = None              # {"points": [...], "last": QPointF}
         self._composing = False        # inside a composite shape (rect/polygon)
         self._key_prefix = ""          # "G" arms FreeCAD-style create-tool keys
+        self._sel_points = []          # ctrl+click multi-selected SketchPoints
         self._constr_action = None     # toolbar action kept for sync
         self._pick = None              # {"type", "kinds", "got"}
 
@@ -785,6 +790,46 @@ class SketcherWorkbench(BaseWorkbench):
                 s = self._vertex_size / 2
                 item.setRect(p.x - s, p.y - s, self._vertex_size, self._vertex_size)
 
+    def ctrl_click(self, pos):
+        """Ctrl+click: toggle-select a vertex/geometry without clearing the
+        rest (needed to multi-select two endpoints for distance/symmetry)."""
+        if self.draw_mode != "SELECT":
+            return False
+        p = self._nearest_point(pos, tol=max(6.0, float(self.snap_px)))
+        if p is not None:
+            if p in self._sel_points:
+                self._sel_points.remove(p)
+            else:
+                self._sel_points.append(p)
+            self._refresh_point_selection()
+            return True
+        geom = self._find_geom_at(pos)
+        if geom is not None:
+            item = self.item_of_geom.get(geom.id)
+            if item is not None:
+                item.setSelected(not item.isSelected())
+                self.update_item(geom)
+                return True
+        return False
+
+    def _refresh_point_selection(self):
+        for pid, item in self._vertex_items.items():
+            p = self._point_by_id(pid)
+            if p is not None:
+                sel = p in self._sel_points
+                item.setBrush(QBrush(QColor(255, 200, 0) if sel
+                                         else QColor(255, 60, 60)))
+
+    def _point_by_id(self, pid):
+        for p in self.all_points():
+            if p.id == pid:
+                return p
+        return None
+
+    def selected_points(self):
+        """Multi-selected SketchPoints (ctrl+click), in click order."""
+        return list(self._sel_points)
+
     def on_hover(self, pos):
         """FreeCAD-style preselection highlight (light blue)."""
         self._update_preview(pos)
@@ -1078,9 +1123,9 @@ class SketcherWorkbench(BaseWorkbench):
         if not ok or abs(value - cur) < 1e-9:
             return
         self.snapshot()
-        self.constraints.append({"type": "DISTANCE", "targets": [line],
-                                 "value": value})
-        self.solve_sketch()
+        c = {"type": "DISTANCE", "targets": [line], "value": value}
+        self.constraints.append(c)
+        self._solve_checked(c)
 
     def _offer_radius_input(self, geom):
         cur = geom.radius
@@ -1090,9 +1135,9 @@ class SketcherWorkbench(BaseWorkbench):
         if not ok or abs(value - cur) < 1e-9:
             return
         self.snapshot()
-        self.constraints.append({"type": "RADIUS", "targets": [geom],
-                                 "value": value})
-        self.solve_sketch()
+        c = {"type": "RADIUS", "targets": [geom], "value": value}
+        self.constraints.append(c)
+        self._solve_checked(c)
 
     def _auto_hv(self, line):
         """FreeCAD auto-constraint: nearly axis-aligned lines get H/V."""
@@ -1215,6 +1260,9 @@ class SketcherWorkbench(BaseWorkbench):
                                      "value": h2})
         if (ok and abs(w2 - w) > 1e-9) or (ok2 and abs(h2 - h) > 1e-9):
             self.solve_sketch()
+            if self.status == STATUS_OVER:
+                self.main_window.log(
+                    tr("Rectangle size conflicts with existing constraints."))
 
     def add_reference_line(self, p1, p2):
         """FreeCAD-style construction/reference line: drawn as an infinite
@@ -1419,37 +1467,17 @@ class SketcherWorkbench(BaseWorkbench):
                    what=", ".join(desc[k] for k in self._SLOTS[ctype]), c=ctype)
 
     def _collect_preselected(self, kinds):
-        """FreeCAD-style: match scene selection against the required slots.
-        Geometry click-selected on the canvas; standalone SketchPoints picked
-        in pick mode count as endpoint selections."""
-        picked = self._picked_points()
-        if any(k in ("point", "line_or_point", "curve_or_point", "point_or_end")
-               for k in kinds) and picked:
-            got = []
-            pool = list(picked) + [
-                g for g in (self.lines + self.circles + self.arcs)
-                if self.item_of_geom.get(g.id) is not None
-                and self.item_of_geom[g.id].isSelected()]
-            for kind in kinds:
-                match = None
-                for g in pool:
-                    if self._slot_matches(kind, g) or (
-                            kind in ("point", "line_or_point", "curve_or_point",
-                                     "point_or_end") and isinstance(g, SketchPoint)):
-                        match = g
-                        break
-                if match is None:
-                    return None
-                got.append(match)
-                pool.remove(match)
-            return got
+        """FreeCAD-style: match the current selection against the required
+        slots. Geometry click-selected on the canvas plus ctrl+click
+        multi-selected vertices all count."""
+        sel_points = list(self._sel_points)
         geoms = [g for g in (self.lines + self.circles + self.arcs + self.points)
                  if self.item_of_geom.get(g.id) is not None
                  and self.item_of_geom[g.id].isSelected()]
-        if not geoms:
+        pool = list(sel_points) + geoms
+        if not pool:
             return None
         got = []
-        pool = list(geoms)
         for kind in kinds:
             match = None
             for g in pool:
@@ -1599,7 +1627,7 @@ class SketcherWorkbench(BaseWorkbench):
         self.constraints.append(c)
         self.main_window.log(trt("{c} = {v} constraint added.",
                                  c=ctype, v=round(value, 2)))
-        self.solve_sketch()
+        self._solve_checked(c)
 
     def _apply_radial(self, ctype, geom):
         cur = geom.radius if ctype == "RADIUS" else 2 * geom.radius
@@ -1610,10 +1638,25 @@ class SketcherWorkbench(BaseWorkbench):
         if not ok:
             return
         self.snapshot()
-        self.constraints.append({"type": ctype, "targets": [geom], "value": value})
+        c = {"type": ctype, "targets": [geom], "value": value}
+        self.constraints.append(c)
         self.main_window.log(trt("{c} = {v} constraint added.",
                                  c=ctype, v=round(value, 2)))
+        self._solve_checked(c)
+
+    def _solve_checked(self, new_constraint):
+        """Solve, and if the new constraint conflicts with the existing system
+        (user perceives this as 'the value did not take effect'), warn and roll
+        it back so the sketch stays consistent."""
         self.solve_sketch()
+        if self.status == STATUS_OVER:
+            self.constraints.remove(new_constraint)
+            self.solve_sketch()
+            QMessageBox.warning(
+                self.main_window, tr("Conflicting Constraint"),
+                tr("This value conflicts with the existing constraints and "
+                   "was not applied. Remove or change the conflicting "
+                   "constraint first."))
 
     def _apply_angle(self, l1, l2):
         def ang(l):

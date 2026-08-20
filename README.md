@@ -29,7 +29,12 @@ FreeCAD-style dual-workbench desktop application built with **PyQt6**. Designed 
      small dialog offers the exact length / radius / width+height (mm, pre-filled with the
      dragged value); typing a value applies it, Esc keeps the dragged size.
    - **Selection & editing**: rubber-band box select (drag on empty canvas), Ctrl+A select
-     all, Del deletes the picked line/circle/arcs only.
+     all, Del deletes the picked line/circle/arcs only, and **Ctrl+click multi-selects
+     vertices and geometry** (needed to pick two endpoints for a point-to-point distance
+     or a symmetry axis).
+   - **Safe dimension entry**: every typed dimension is solved immediately; if it conflicts
+     with the existing constraints the user is warned and the conflicting value is rolled
+     back (instead of silently failing).
    - File menu: **New 2D Sketch** (Ctrl+N), **Open 2D Sketch…**, **Import 2D CAD (DXF)…**,
      **Save 2D Sketch (JSON)** (Ctrl+S) — round-trippable, **Save as 2D CAD (DXF)…**,
      **Save as 2D Vector (SVG)…**.

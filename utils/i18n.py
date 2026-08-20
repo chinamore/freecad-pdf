@@ -182,6 +182,13 @@ TEMPLATES = {
     "Rectangle Height": "矩形高度",
     "Height (mm):": "高度 (mm)：",
     "Selected {n} element(s).": "已选中 {n} 个图元。",
+    "Conflicting Constraint": "约束冲突",
+    "This value conflicts with the existing constraints and "
+    "was not applied. Remove or change the conflicting "
+    "constraint first.":
+        "该数值与现有约束冲突，未生效。请先移除或修改冲突的约束。",
+    "Rectangle size conflicts with existing constraints.":
+        "矩形尺寸与现有约束冲突。",
     "Arc (3 pts)": "三点圆弧",
     "Rectangle": "矩形",
     "Triangle": "三角形",
