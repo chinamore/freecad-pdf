@@ -421,13 +421,31 @@ class SketcherWorkbench(BaseWorkbench):
     # ------------------------------------------------------------------ UI
     def _draw_grid(self):
         grid_pen = QPen(QColor(230, 230, 230), 1, Qt.PenStyle.DotLine)
-        axis_pen = QPen(QColor(180, 180, 180), 1.5)
         for x in range(-1000, 1000, 50):
             self.scene.addLine(x, -1000, x, 1000, grid_pen)
         for y in range(-1000, 1000, 50):
             self.scene.addLine(-1000, y, 1000, y, grid_pen)
-        self.scene.addLine(-1000, 0, 1000, 0, axis_pen)
-        self.scene.addLine(0, -1000, 0, 1000, axis_pen)
+        # FreeCAD default XY reference lines: X axis red, Y axis green
+        x_pen = QPen(QColor(200, 40, 40), 2)
+        y_pen = QPen(QColor(40, 160, 40), 2)
+        self.scene.addLine(-1000, 0, 1000, 0, x_pen)
+        self.scene.addLine(0, -1000, 0, 1000, y_pen)
+        label_font = QFont("Arial", 10, QFont.Weight.Bold)
+        x_label = QGraphicsSimpleTextItem("X")
+        x_label.setFont(label_font)
+        x_label.setBrush(QBrush(QColor(200, 40, 40)))
+        x_label.setPos(985, -22)
+        self.scene.addItem(x_label)
+        y_label = QGraphicsSimpleTextItem("Y")
+        y_label.setFont(label_font)
+        y_label.setBrush(QBrush(QColor(40, 160, 40)))
+        y_label.setPos(6, -995)
+        self.scene.addItem(y_label)
+        # FreeCAD red origin marker at (0,0)
+        origin = self.scene.addEllipse(-4, -4, 8, 8,
+                                       QPen(QColor(200, 0, 0), 2),
+                                       QBrush(QColor(220, 40, 40)))
+        origin.setZValue(40)
 
     def get_central_widget(self):
         return self.view
