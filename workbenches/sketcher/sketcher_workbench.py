@@ -2384,14 +2384,18 @@ class SketcherWorkbench(BaseWorkbench):
         self._rebuild_vertices()
         self.main_window.log(trt("Opened 2D sketch {v}", v=file_path))
 
-    # ------------------------------------------------------------------ DXF import
+    # ------------------------------------------------------------------ DXF / DWG import
     def import_dxf(self, file_path=None):
-        """Import a DXF (LINE / CIRCLE / ARC / POINT entities) into the sketch."""
+        """Import a DXF (text) or DWG (binary, via ezdwg) into the sketch."""
         if file_path is None:
             file_path, _ = QFileDialog.getOpenFileName(
-                self.main_window, tr("Import 2D CAD (DXF)"), "",
-                tr("DXF Files (*.dxf)"))
+                self.main_window, tr("Import 2D CAD"), "",
+                tr("CAD Files (*.dxf *.dwg);;DXF Files (*.dxf);;DWG Files (*.dwg)"))
         if not file_path:
+            return
+        lower = file_path.lower()
+        if lower.endswith(".dwg"):
+            self._import_dwg(file_path)
             return
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -2404,30 +2408,113 @@ class SketcherWorkbench(BaseWorkbench):
             QMessageBox.information(self.main_window, tr("Import 2D CAD"),
                                     tr("No supported entities (LINE/CIRCLE/ARC/POINT) found."))
             return
+        self._import_entities(
+            [("LINE", (d[10], -d[20], d[11], -d[21])) if kind == "LINE"
+             else ("CIRCLE", (d[10], -d[20], d[40])) if kind == "CIRCLE"
+             else ("ARC", (d[10], -d[20], d[40], d[50], d[51])) if kind == "ARC"
+             else ("POINT", (d[10], -d[20])) for kind, d in entities],
+            file_path)
+
+    def _import_dwg(self, file_path):
+        """Binary DWG import using ezdwg (supports R13-R2018)."""
+        try:
+            import ezdwg
+        except ImportError:
+            QMessageBox.critical(
+                self.main_window, tr("Import Failed"),
+                tr("DWG support requires the 'ezdwg' package (pip install ezdwg)."))
+            return
+        try:
+            doc = ezdwg.read(file_path)
+            raw = list(doc.modelspace().iter_entities())
+        except Exception as e:
+            QMessageBox.critical(self.main_window, tr("Import Failed"), str(e))
+            return
+        entities = []
+        for e in raw:
+            t = e.dxftype
+            d = e.dxf
+            try:
+                if t == "LINE":
+                    (x1, y1, _), (x2, y2, _) = d["start"], d["end"]
+                    entities.append(("LINE", (x1, -y1, x2, -y2)))
+                elif t == "CIRCLE":
+                    (cx, cy, _), r = d["center"], d["radius"]
+                    entities.append(("CIRCLE", (cx, -cy, r)))
+                elif t == "ARC":
+                    (cx, cy, _), r = d["center"], d["radius"]
+                    entities.append(("ARC", (cx, -cy, r,
+                                             d["start_angle"], d["end_angle"])))
+                elif t == "POINT":
+                    (x, y, _) = d["location"]
+                    entities.append(("POINT", (x, -y)))
+            except (KeyError, TypeError):
+                continue
+        if not entities:
+            QMessageBox.information(self.main_window, tr("Import 2D CAD"),
+                                    tr("No supported entities (LINE/CIRCLE/ARC/POINT) found."))
+            return
+        self._import_entities(entities, file_path)
+
+    def _import_entities(self, entities, file_path):
+        """Shared import path for DXF / DWG tuples (scene y-down coords).
+        Bulk import: geometry is added without per-entity solve (much faster
+        for large CAD files), then solved once at the end."""
         self.snapshot()
         imported = 0
         for kind, d in entities:
             try:
                 if kind == "LINE":
-                    self.add_line(SketchPoint(d[10], -d[20]), SketchPoint(d[11], -d[21]))
+                    x1, y1, x2, y2 = d
+                    if math.hypot(x2 - x1, y2 - y1) < 0.5:
+                        continue
+                    line = SketchLine(SketchPoint(x1, y1), SketchPoint(x2, y2),
+                                      self.construction_mode)
+                    self.lines.append(line)
+                    self.draw_item(line)
                 elif kind == "CIRCLE":
-                    self.add_circle(SketchPoint(d[10], -d[20]), d[40])
+                    cx, cy, r = d
+                    if r < 0.5:
+                        continue
+                    circle = SketchCircle(SketchPoint(cx, cy), r,
+                                          self.construction_mode)
+                    self.circles.append(circle)
+                    self.draw_item(circle)
                 elif kind == "ARC":
-                    cx, cy, r = d[10], -d[20], d[40]
-                    a1, a2 = math.radians(d[50]), math.radians(d[51])
-                    p1 = SketchPoint(cx + r * math.cos(a1), cy - r * math.sin(a1))
-                    p2 = SketchPoint(cx + r * math.cos(a2), cy - r * math.sin(a2))
-                    am = (d[50] + ((d[51] - d[50]) % 360) / 2) % 360
+                    cx, cy, r, a1, a2 = d
+                    a1r, a2r = math.radians(a1), math.radians(a2)
+                    p1 = SketchPoint(cx + r * math.cos(a1r), cy - r * math.sin(a1r))
+                    p2 = SketchPoint(cx + r * math.cos(a2r), cy - r * math.sin(a2r))
+                    am = (a1 + ((a2 - a1) % 360) / 2) % 360
                     mid = (cx + r * math.cos(math.radians(am)),
                            cy - r * math.sin(math.radians(am)))
-                    self.add_arc(p1, mid, p2)
+                    cc = circumcenter(p1.x, p1.y, mid[0], mid[1], p2.x, p2.y)
+                    if cc is None:
+                        continue
+                    center = SketchPoint(*cc)
+                    arc = SketchArc(center, r, p1, p2, mid=mid,
+                                    is_construction=self.construction_mode)
+                    self.arcs.append(arc)
+                    self.draw_item(arc)
                 elif kind == "POINT":
-                    self.add_point_geom(SketchPoint(d[10], -d[20]))
+                    p = SketchPoint(d[0], d[1])
+                    self.points.append(p)
+                    self.draw_item(p)
                 imported += 1
             except Exception:
                 continue
         self.main_window.log(trt("Imported {n} entities from {v}", n=imported, v=file_path))
-        self._rebuild_vertices()
+        # bulk imports (hundreds of CAD entities) skip the solver: solving an
+        # unconstrained multi-thousand-variable system is wasted work
+        if imported > 200:
+            self.dof = 0
+            self._restyle()
+            self._rebuild_vertices()
+            self._update_dof_label()
+        else:
+            self.solve_sketch()
+        self.view.fitInView(self.scene.itemsBoundingRect().adjusted(-40, -40, 40, 40),
+                            Qt.AspectRatioMode.KeepAspectRatio)
 
     @staticmethod
     def _parse_dxf_entities(text):

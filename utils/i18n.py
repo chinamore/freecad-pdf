@@ -271,8 +271,13 @@ TEMPLATES = {
     "&New 2D Sketch": "新建 2D 草图(&N)",
     "&Open 2D Sketch...": "打开 2D 草图(&O)...",
     "Open 2D Sketch": "打开 2D 草图",
-    "&Import 2D CAD (DXF)...": "导入 2D CAD (DXF)(&I)...",
+    "&Import 2D CAD (DXF)...": "导入 2D CAD (DXF/DWG)(&I)...",
     "Import 2D CAD (DXF)": "导入 2D CAD (DXF)",
+    "Import 2D CAD": "导入 2D CAD",
+    "CAD Files (*.dxf *.dwg);;DXF Files (*.dxf);;DWG Files (*.dwg)":
+        "CAD 文件 (*.dxf *.dwg);;DXF 文件 (*.dxf);;DWG 文件 (*.dwg)",
+    "DWG support requires the 'ezdwg' package (pip install ezdwg).":
+        "DWG 支持需要安装 'ezdwg' 包（pip install ezdwg）。",
     "&Save 2D Sketch (JSON)...": "保存 2D 草图 (JSON)(&S)...",
     "Save 2D Sketch (JSON)": "保存 2D 草图 (JSON)",
     "Sketch Files (*.sketch.json);;JSON Files (*.json)":
