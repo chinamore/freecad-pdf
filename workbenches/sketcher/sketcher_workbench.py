@@ -599,6 +599,11 @@ class SketcherWorkbench(BaseWorkbench):
         blk_act.triggered.connect(self.add_block_constraint)
         toolbar.addAction(blk_act)
 
+        tol_act = QAction(make_constraint_icon("±"), "", self.main_window)
+        tol_act.setToolTip(tr("Dimension tolerance (double-click a dimension badge to edit)"))
+        tol_act.triggered.connect(self.show_tolerance_panel_for_selection)
+        toolbar.addAction(tol_act)
+
         toolbar.addSeparator()
 
         undo_act = QAction(make_constraint_icon("<<"), "", self.main_window)
@@ -623,19 +628,17 @@ class SketcherWorkbench(BaseWorkbench):
         dxf_act.triggered.connect(self.export_dxf)
         toolbar.addAction(dxf_act)
 
-        # TechDraw template library (A3 / A4, landscape / portrait)
+        # TechDraw template library (official FreeCAD ISO5457 SVG templates)
         tpl_act = QAction(make_constraint_icon("TPL"), "", self.main_window)
         tpl_act.setToolTip(tr("Insert TechDraw page template"))
         tpl_menu = QMenu(self.main_window)
-        for name, (w, h, landscape) in (
-                ("A3 Landscape", (420, 297, True)),
-                ("A3 Portrait", (297, 420, False)),
-                ("A4 Landscape", (297, 210, True)),
-                ("A4 Portrait", (210, 297, False))):
-            act = tpl_menu.addAction(name)
+        for label, fname in (
+                ("A3 Landscape ISO", "A3_Landscape_ISO5457_minimal.svg"),
+                ("A4 Landscape ISO", "A4_Landscape_ISO5457_minimal.svg"),
+                ("A4 Portrait ISO", "A4_Portrait_ISO5457_minimal.svg")):
+            act = tpl_menu.addAction(label)
             act.triggered.connect(
-                lambda checked, n=name, s=(w, h, landscape):
-                self.insert_template(n, s))
+                lambda checked, f=fname: self.insert_template(f))
         tpl_act.setMenu(tpl_menu)
         toolbar.addAction(tpl_act)
         tpl_btn = toolbar.widgetForAction(tpl_act)
@@ -646,39 +649,27 @@ class SketcherWorkbench(BaseWorkbench):
         toolbar.addWidget(self.dof_label)
 
     # ------------------------------------------------------------------ TechDraw templates
-    def insert_template(self, name, size):
-        """Place an ISO-style TechDraw page frame (border + title block) on the
-        canvas. Geometry can then be arranged inside the frame."""
-        w, h, _ = size
-        frame_pen = QPen(QColor(40, 40, 40), 1.5)
-        item = self.scene.addRect(-w / 2, -h / 2, w, h, frame_pen)
-        item.setZValue(-5)
-        # title block lines (ISO-like, bottom-right corner)
-        bx, by = w / 2, h / 2
-        tb_w, tb_h = 155, 24
-        self.scene.addLine(bx - tb_w, by, bx, by, frame_pen).setZValue(-4)
-        self.scene.addLine(bx - tb_w, by - tb_h, bx, by - tb_h,
-                           frame_pen).setZValue(-4)
-        self.scene.addLine(bx - tb_w, by - tb_h, bx - tb_w, by, frame_pen).setZValue(-4)
-        font = QFont("Arial", 3)
-        fields = [
-            ("TITLE", bx - tb_w + 3, by - 16),
-            ("AUTHOR", bx - tb_w + 3, by - 12),
-            ("DATE", bx - tb_w + 3, by - 8),
-            ("SCALE", bx - tb_w + 3, by - 4),
-            ("SHEET", bx - tb_w + 60, by - 4),
-            ("MATERIAL", bx - tb_w + 60, by - 16),
-        ]
-        for label, x, y in fields:
-            t = QGraphicsSimpleTextItem(label + ":")
-            t.setFont(font)
-            t.setPos(x, y)
-            t.setZValue(-3)
-            self.scene.addItem(t)
-        self._template = item  # remember
-        self.main_window.log(trt("TechDraw template {n} inserted.", n=name))
-        self.view.fitInView(item.boundingRect().adjusted(-30, -30, 30, 30),
-                            Qt.AspectRatioMode.KeepAspectRatio)
+    def insert_template(self, fname):
+        """Render an official FreeCAD ISO5457 SVG template onto the canvas."""
+        from utils.resources import resource_path
+        path = resource_path(f"assets/templates/{fname}")
+        if not os.path.exists(path):
+            QMessageBox.warning(self.main_window, tr("Template"),
+                                tr("Template file not found:") + f"\n{path}")
+            return
+        from PyQt6.QtSvg import QSvgRenderer
+        from PyQt6.QtSvgWidgets import QGraphicsSvgItem
+        item = QGraphicsSvgItem(path)
+        item.setZValue(-10)  # behind geometry
+        self.scene.addItem(item)
+        rect = item.boundingRect()
+        item.setPos(-rect.width() / 2, -rect.height() / 2)
+        self._template = item
+        self.main_window.log(trt("TechDraw template {n} inserted.", n=fname))
+        self.view.fitInView(item.boundingRect().adjusted(
+            -item.pos().x() - 30, -item.pos().y() - 30,
+            rect.width() + 60, rect.height() + 60),
+            Qt.AspectRatioMode.KeepAspectRatio)
 
     def retranslate(self):
         """Hook called by MainWindow.retranslate() to refresh cached strings."""
@@ -1810,6 +1801,7 @@ class SketcherWorkbench(BaseWorkbench):
         self.main_window.log(trt("{c} = {v} constraint added.",
                                  c=ctype, v=round(value, 2)))
         self._solve_checked(c)
+        self._show_tolerance_panel(c)
 
     def _apply_radial(self, ctype, geom):
         cur = geom.radius if ctype == "RADIUS" else 2 * geom.radius
@@ -1825,6 +1817,7 @@ class SketcherWorkbench(BaseWorkbench):
         self.main_window.log(trt("{c} = {v} constraint added.",
                                  c=ctype, v=round(value, 2)))
         self._solve_checked(c)
+        self._show_tolerance_panel(c)
 
     def _solve_checked(self, new_constraint):
         """Solve, and if the new constraint conflicts with the existing system
@@ -1942,6 +1935,14 @@ class SketcherWorkbench(BaseWorkbench):
                                  v=round(value, 2)))
         self.solve_sketch()
         self._show_tolerance_panel(c)
+
+    def show_tolerance_panel_for_selection(self):
+        """Toolbar '±': open the tolerance editor for the first dimension."""
+        for c in self.constraints:
+            if "value" in c:
+                self._show_tolerance_panel(c)
+                return
+        self.main_window.log(tr("Add a dimension first, then edit its tolerance."))
 
     def _show_tolerance_panel(self, c):
         """Populate the left tolerance editor for this constraint."""

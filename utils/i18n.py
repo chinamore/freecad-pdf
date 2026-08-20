@@ -13,6 +13,14 @@ TRANSLATIONS = {
         "PDF 气泡标注 & 2D 草图（FreeCAD 风格）",
     "PDF Bubble Annotator": "PDF 气泡标注",
     "2D Sketcher Workbench": "2D 草图",
+    "Drawing Page (TechDraw)": "图纸 (TechDraw)",
+    "Page Template Fields": "图纸模板字段",
+    "Export SVG": "导出 SVG",
+    "Insert a page template first.": "请先插入图纸模板。",
+    "Drawing page template: {n}": "图纸模板：{n}",
+    "Drawing page exported to {v}": "图纸已导出至 {v}",
+    "Template": "模板",
+    "Template file not found:": "模板文件未找到：",
     "&File": "文件(&F)",
     "&Open PDF...": "打开 PDF(&O)...",
     "&Export Annotations / JSON...": "导出标注 / JSON(&E)...",
@@ -272,6 +280,13 @@ TEMPLATES = {
     "+Tol:": "上公差：",
     "-Tol:": "下公差：",
     "Decimals:": "小数位：",
+    "<b>Dimension Tolerance:</b>": "<b>尺寸公差：</b>",
+    "(double-click a dimension badge on the canvas)":
+        "（双击画布上的尺寸标注编辑公差）",
+    "Dimension tolerance (double-click a dimension badge to edit)":
+        "尺寸公差（双击画布尺寸标注编辑）",
+    "Add a dimension first, then edit its tolerance.":
+        "请先添加尺寸，然后编辑公差。",
     "Insert TechDraw page template": "插入 TechDraw 图纸模板",
     "TechDraw template {n} inserted.": "已插入 TechDraw 模板 {n}。",
     "&New 2D Sketch": "新建 2D 草图(&N)",

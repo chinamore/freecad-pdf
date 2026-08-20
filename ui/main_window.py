@@ -19,10 +19,12 @@ from utils.i18n import tr, available_languages
 
 from workbenches.pdf_annotator.pdf_workbench import PDFAnnotatorWorkbench
 from workbenches.sketcher.sketcher_workbench import SketcherWorkbench
+from workbenches.techdraw.techdraw_workbench import TechDrawWorkbench
 
 WINDOW_TITLE = "PDF Bubble Annotator & 2D Sketcher (FreeCAD Style)"
 WB_PDF = "PDF Bubble Annotator"
 WB_SKETCH = "2D Sketcher Workbench"
+WB_DRAWING = "Drawing Page (TechDraw)"
 
 
 def resource_path(relative):
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         # Register Workbenches
         self.register_workbench(WB_PDF, PDFAnnotatorWorkbench(self))
         self.register_workbench(WB_SKETCH, SketcherWorkbench(self))
+        self.register_workbench(WB_DRAWING, TechDrawWorkbench(self))
 
         # Set default workbench
         self._select_workbench(WB_PDF)
@@ -184,7 +187,9 @@ class MainWindow(QMainWindow):
         self.property_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         left_layout.addWidget(self.property_table, 1)
 
-        # TechDraw-style tolerance editor (visible when a dimension is picked)
+        # TechDraw-style tolerance editor
+        self.tol_title_label = QLabel(tr("<b>Dimension Tolerance:</b>"))
+        left_layout.addWidget(self.tol_title_label)
         self.tolerance_frame = QFrame()
         tol_layout = QFormLayout(self.tolerance_frame)
         self.tol_nominal = QLabel("-")
@@ -197,7 +202,10 @@ class MainWindow(QMainWindow):
         tol_layout.addRow(tr("-Tol:"), self.tol_under)
         self.tol_decimals = QSpinBox(minimum=0, maximum=6, value=2)
         tol_layout.addRow(tr("Decimals:"), self.tol_decimals)
-        self.tolerance_frame.setVisible(False)
+        self.tol_hint = QLabel(tr("(double-click a dimension badge on the canvas)"))
+        self.tol_hint.setStyleSheet("color: gray; font-size: 10px;")
+        tol_layout.addRow(self.tol_hint)
+        self.tolerance_frame.setVisible(True)  # always visible with a hint
         left_layout.addWidget(self.tolerance_frame)
 
         self.left_dock.setWidget(left_widget)
